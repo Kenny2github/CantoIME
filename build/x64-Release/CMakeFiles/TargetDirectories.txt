@@ -1,0 +1,3 @@
+C:/Users/kenlh/Desktop/git/Kenny2github/CantoIME/build/x64-Release/CMakeFiles/MinimalPinyinIME.dir
+C:/Users/kenlh/Desktop/git/Kenny2github/CantoIME/build/x64-Release/CMakeFiles/edit_cache.dir
+C:/Users/kenlh/Desktop/git/Kenny2github/CantoIME/build/x64-Release/CMakeFiles/rebuild_cache.dir
