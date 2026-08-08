@@ -13,10 +13,15 @@
 ; (Assumes the DLLs were already built to ..\build\Release\CantoIME-*.dll)
 
 #define MyAppName "CantoIME"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "AbyxDev"
 
 [Setup]
+; In-place updates: the constant AppId makes Inno Setup recognize an existing
+; install and upgrade it in place (same install dir, files overwritten) when a
+; newer installer is run, with no need to uninstall first. Bump MyAppVersion for
+; each release so the upgrade is recorded. The in-use TSF DLL is handled by the
+; restartreplace flag on the [Files] entries below.
 AppId={{C1D2E3F4-A5B6-4C7D-8E9F-0A1B2C3D4E5F}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
@@ -30,6 +35,9 @@ SolidCompression=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
+; Don't try to force-close apps that have the IME loaded; rely on
+; restartreplace to swap a locked DLL on the next reboot instead.
+CloseApplications=no
 WizardStyle=modern
 
 [Tasks]
@@ -44,10 +52,13 @@ Name: "mo"; Description: "Chinese (Traditional, Macao SAR)"; \
     GroupDescription: "Install CantoIME for which Traditional Chinese variant:"; Flags: exclusive unchecked
 
 [Files]
-; The DLL for the selected variant (only one task can be active).
-Source: "..\build\Release\CantoIME-HK.dll"; DestDir: "{app}"; Tasks: hk; Flags: ignoreversion 64bit
-Source: "..\build\Release\CantoIME-TW.dll"; DestDir: "{app}"; Tasks: tw; Flags: ignoreversion 64bit
-Source: "..\build\Release\CantoIME-MO.dll"; DestDir: "{app}"; Tasks: mo; Flags: ignoreversion 64bit
+; The DLL for the selected variant (only one task can be active). ignoreversion
+; forces overwrite on upgrade (the DLLs carry no version resource);
+; restartreplace + uninsrestartdelete queue the swap for the next reboot when
+; the DLL is loaded by a running process and so can't be replaced immediately.
+Source: "..\build\Release\CantoIME-HK.dll"; DestDir: "{app}"; Tasks: hk; Flags: ignoreversion 64bit restartreplace uninsrestartdelete
+Source: "..\build\Release\CantoIME-TW.dll"; DestDir: "{app}"; Tasks: tw; Flags: ignoreversion 64bit restartreplace uninsrestartdelete
+Source: "..\build\Release\CantoIME-MO.dll"; DestDir: "{app}"; Tasks: mo; Flags: ignoreversion 64bit restartreplace uninsrestartdelete
 ; Shared, runtime-customizable dictionary (always installed).
 Source: "..\dictionary.txt"; DestDir: "{app}"; Flags: ignoreversion
 

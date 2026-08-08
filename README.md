@@ -66,11 +66,18 @@ romanization<TAB or spaces>char1 char2 char3 ...
 ```
 
 Candidates are space-separated. Lines beginning with `#` are comments. Matching
-is case-insensitive; there is no tone input. The final (still-open) syllable is
+is case-insensitive; there is no tone input. The final (still-open) segment is
 matched by **prefix**: typing `ga` surfaces every key beginning with `ga`, and a
 prefix-only match shows its leftover romanization after the character (e.g. with
-`gao` → 高, typing `ga` displays `高o`). Any leading syllables in a multi-syllable
-buffer must be **exact** keys; only the last syllable is prefix-matched.
+`gao` → 高, typing `ga` displays `高o`). Any leading segments in a multi-segment
+buffer must be **exact** keys.
+
+Multi-key input is segmented **fewest keys first**: every way to split the buffer
+into leading exact keys plus a prefix-matched final segment is enumerated, and
+segmentations using fewer keys rank higher. So if the dictionary has entries for
+`abc`, `def`, `g`, `abcd`, and `efg`, typing `abcdefg` lists the 2-key `abcd efg`
+before the 3-key `abc def g`. (The 0-leading-key split is the whole buffer
+prefix-matched, so a real single key still outranks any multi-key segmentation.)
 
 ### Dictionary search order (documented)
 
@@ -226,6 +233,16 @@ Edit the installed `dictionary.txt` (its path is the registry value
 next time the IME is activated, so re-select the IME (or sign out/in). You can
 also edit `dictionary.txt` in the repo before building/installing.
 
+### Updating
+
+To update, just run a newer `CantoIME-Setup.exe`. There is **no need to
+uninstall first**: the installer keeps a constant `AppId`, so Inno Setup detects
+the existing install and upgrades it in place, overwriting the files and
+re-registering the IME. If the DLL happens to be loaded by a running process at
+the time, the swap is queued for the next reboot (the `restartreplace` flag), so
+Windows may ask you to restart to finish the update. Bump `MyAppVersion` in
+`installer/setup.iss` for each release so the upgrade is recorded.
+
 ---
 
 ## How it works
@@ -247,20 +264,22 @@ also edit `dictionary.txt` in the repo before building/installing.
   with GDI (`DrawTextW`) using the CJK font "Microsoft JhengHei". It is
   positioned via `ITfContextView::GetTextExt` on the composition range (run
   inside a read edit session), with a caret/cursor-position fallback.
-- **Dictionary lookup.** On every keystroke the buffer is segmented greedily:
-  leading syllables are locked as exact keys and the final syllable is
-  prefix-matched (see the dictionary format section). Matches populate the
-  candidate list, each carrying the Chinese text to commit plus the display
-  string (which may include the final syllable's leftover romanization).
+- **Dictionary lookup.** On every keystroke the buffer is segmented every way it
+  can be: any run of leading exact keys plus a prefix-matched final segment. The
+  segmentations are ranked fewest-keys-first (see the dictionary format section).
+  Matches populate the candidate list, each carrying the Chinese text to commit
+  plus the display string (which may include the final segment's leftover
+  romanization).
 
 ---
 
 ## Known limitations (this is a sample)
 
 - **No tone input** and no fuzzy/romanization correction.
-- **Greedy segmentation.** Leading syllables are locked to their single best
-  character using a longest-exact-match scan; there is no per-syllable candidate
-  choice for the locked portion and no re-segmentation backtracking.
+- **Leading segments are locked to one character.** Every segmentation is
+  enumerated and ranked fewest-keys-first, but each leading segment is locked to
+  its single best (first-listed) character; there is no per-segment candidate
+  choice for the locked portion. Enumeration is capped for very long buffers.
 - **Not DPI-aware**; the popup uses fixed pixel metrics.
 - The caret-position fallback (`GetCaretPos` -> `ClientToScreen` on the
   foreground window) is heuristic and may be imprecise in some apps.
