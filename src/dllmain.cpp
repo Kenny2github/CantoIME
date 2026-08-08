@@ -131,20 +131,23 @@ static std::wstring GuidToString(REFGUID guid)
     return std::wstring(buf);
 }
 
-// Creates a key and sets its (default) value to the given string.
-static bool SetRegKeyValue(HKEY root, const std::wstring& subkey,
+// Creates a key and sets its (default) value to the given string. Returns the
+// Win32 error code (ERROR_SUCCESS on success) so callers can surface the real
+// failure reason (e.g. ERROR_ACCESS_DENIED when not elevated).
+static LONG SetRegKeyValue(HKEY root, const std::wstring& subkey,
                            const wchar_t* valueName, const std::wstring& data)
 {
     HKEY hKey = nullptr;
-    if (RegCreateKeyExW(root, subkey.c_str(), 0, nullptr,
-                        REG_OPTION_NON_VOLATILE, KEY_WRITE, nullptr, &hKey, nullptr) != ERROR_SUCCESS)
-        return false;
+    LONG rc = RegCreateKeyExW(root, subkey.c_str(), 0, nullptr,
+                              REG_OPTION_NON_VOLATILE, KEY_WRITE, nullptr, &hKey, nullptr);
+    if (rc != ERROR_SUCCESS)
+        return rc;
 
-    LONG rc = RegSetValueExW(hKey, valueName, 0, REG_SZ,
-                             reinterpret_cast<const BYTE*>(data.c_str()),
-                             static_cast<DWORD>((data.length() + 1) * sizeof(wchar_t)));
+    rc = RegSetValueExW(hKey, valueName, 0, REG_SZ,
+                        reinterpret_cast<const BYTE*>(data.c_str()),
+                        static_cast<DWORD>((data.length() + 1) * sizeof(wchar_t)));
     RegCloseKey(hKey);
-    return rc == ERROR_SUCCESS;
+    return rc;
 }
 
 // Registers HKCR\CLSID\{clsid}\InprocServer32 pointing at this DLL.
@@ -154,19 +157,22 @@ static HRESULT RegisterInprocServer()
     std::wstring base  = L"CLSID\\" + clsid;
 
     // Friendly name on the CLSID key.
-    if (!SetRegKeyValue(HKEY_CLASSES_ROOT, base, nullptr, TEXTSERVICE_DESC))
-        return E_FAIL;
+    LONG rc = SetRegKeyValue(HKEY_CLASSES_ROOT, base, nullptr, TEXTSERVICE_DESC);
+    if (rc != ERROR_SUCCESS)
+        return HRESULT_FROM_WIN32(rc);
 
     // Module path.
     wchar_t module[MAX_PATH] = { 0 };
     if (GetModuleFileNameW(g_hInst, module, MAX_PATH) == 0)
-        return E_FAIL;
+        return HRESULT_FROM_WIN32(GetLastError());
 
     std::wstring inproc = base + L"\\InprocServer32";
-    if (!SetRegKeyValue(HKEY_CLASSES_ROOT, inproc, nullptr, module))
-        return E_FAIL;
-    if (!SetRegKeyValue(HKEY_CLASSES_ROOT, inproc, L"ThreadingModel", L"Apartment"))
-        return E_FAIL;
+    rc = SetRegKeyValue(HKEY_CLASSES_ROOT, inproc, nullptr, module);
+    if (rc != ERROR_SUCCESS)
+        return HRESULT_FROM_WIN32(rc);
+    rc = SetRegKeyValue(HKEY_CLASSES_ROOT, inproc, L"ThreadingModel", L"Apartment");
+    if (rc != ERROR_SUCCESS)
+        return HRESULT_FROM_WIN32(rc);
 
     return S_OK;
 }
@@ -283,10 +289,20 @@ STDAPI DllRegisterServer()
     bool coInited = SUCCEEDED(hrCo);
 
     HRESULT hr = RegisterInprocServer();
+    if (FAILED(hr))
+        OutputDebugStringW(L"[MPIME] RegisterInprocServer failed\n");
     if (SUCCEEDED(hr))
+    {
         hr = RegisterProfile();
+        if (FAILED(hr))
+            OutputDebugStringW(L"[MPIME] RegisterProfile failed\n");
+    }
     if (SUCCEEDED(hr))
+    {
         hr = RegisterCategories();
+        if (FAILED(hr))
+            OutputDebugStringW(L"[MPIME] RegisterCategories failed\n");
+    }
 
     if (FAILED(hr))
     {
@@ -299,7 +315,9 @@ STDAPI DllRegisterServer()
     if (coInited)
         CoUninitialize();
 
-    return FAILED(hr) ? SELFREG_E_CLASS : S_OK;
+    // Return the actual failing HRESULT (not a blanket SELFREG_E_CLASS) so the
+    // real cause is visible to regsvr32 / the CI registration smoke test.
+    return hr;
 }
 
 STDAPI DllUnregisterServer()
