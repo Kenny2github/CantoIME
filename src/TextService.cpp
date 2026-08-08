@@ -47,6 +47,8 @@ CTextService* CTextService::s_kbdOwner = nullptr;
 static const UINT WM_CANTO_TOGGLE = WM_APP + 0x101;
 static const wchar_t* kMsgWndClass = L"CantoIME_" CANTO_VARIANT_TAG L"_MsgWnd";
 
+static bool IsShiftVK(WPARAM vk); // defined with the key-handling helpers below
+
 // ---------------------------------------------------------------------------
 // Construction / destruction
 // ---------------------------------------------------------------------------
