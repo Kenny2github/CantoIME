@@ -30,6 +30,8 @@
 #include <ctffunc.h>   // ITfContextView / display helpers live in msctf; kept for completeness
 #include <windowsx.h>  // GET_WHEEL_DELTA_WPARAM
 #include <unordered_set>
+#include <functional>
+#include <algorithm>
 
 // Statics backing the low-level mouse wheel hook.
 HHOOK         CTextService::s_wheelHook  = nullptr;
@@ -517,43 +519,49 @@ STDMETHODIMP CTextService::OnCompositionTerminated(TfEditCookie /*ec*/, ITfCompo
 static const size_t kMaxCandidates = 300;
 static const size_t kMaxPrefixKeys = 200;
 
-// Builds m_candidates from m_romanization in two priority tiers:
-//   1. Whole-buffer prefix match: every actual dictionary key the entire buffer
-//      is a prefix of. A real multi-syllable entry outranks any segmentation of
-//      shorter keys, e.g. "hah" surfaces 哈哈 (from key "haha") before 下下 (a
-//      doubling of "ha").
-//   2. Greedy segmentation: lock complete leading syllables (each an exact key,
-//      best character), then prefix-match the final open syllable. This covers
-//      inputs the dictionary has no whole-buffer key for, e.g. "gaogaod" locks
-//      高高 (gao, gao) then prefix-matches "d" -> "de" giving 高高的e.
+// Builds m_candidates from m_romanization, preferring segmentations that consume
+// the buffer greedily: the longest key first, then the longest next key, etc.
 //
-// A candidate emits one entry per character of each matched key, displayed as
-// <locked chars><char><leftover romanization> and committed as <locked chars>
-// <char>. Both tiers feed one dedup set keyed on the commit string: keys arrive
-// in ascending order, so the first time a given Chinese text appears it carries
-// the lexicographically smallest remainder, and later duplicates are dropped.
-// "gagad" locks nothing and prefix-matches no key, so no candidates appear.
+// The buffer is split into a run of leading exact keys (each locked to its best
+// character) followed by a non-empty final segment that is prefix-matched. Every
+// such split is enumerated, then ordered by its per-key consumption sequence
+// (leading key lengths, then the final segment's length) compared largest-first.
+// So for "abcdefg" with keys abc/def/g/abcd/efg, "abcd efg" (lengths 4,3) beats
+// "abc def g" (lengths 3,3,1) because its first key is longer, not because it
+// uses fewer keys. The 0-leading-key split is the whole buffer prefix-matched:
+// its first key consumes all n characters, the maximum possible, so a real key
+// spanning the buffer still ranks first, e.g. "hah" surfaces 哈哈 (key "haha")
+// before 下下 (a doubling of "ha").
+//
+// Each split emits one entry per character of each prefix-matched key, displayed
+// as <locked chars><char><leftover romanization> and committed as <locked chars>
+// <char>. All splits share one dedup set keyed on the commit string, so the first
+// (greediest) segmentation to produce a given Chinese text wins and later
+// duplicates drop.
 void CTextService::BuildCandidates()
 {
     m_candidates.clear();
     if (m_romanization.empty())
         return;
 
+    const std::wstring& buf = m_romanization;
+    const size_t n = buf.size();
+
     std::unordered_set<std::wstring> seenCommits;
 
-    // Emits candidates for one (locked prefix, open final syllable) split.
+    // Emits candidates for one (locked prefix, open final segment) split.
     // Returns false once the candidate cap is reached so callers stop early.
-    auto emit = [&](const std::wstring& locked, const std::wstring& finalSyl) -> bool
+    auto emit = [&](const std::wstring& locked, const std::wstring& finalSeg) -> bool
     {
-        std::vector<std::wstring> keys = m_dict.KeysWithPrefix(finalSyl, kMaxPrefixKeys);
+        std::vector<std::wstring> keys = m_dict.KeysWithPrefix(finalSeg, kMaxPrefixKeys);
         for (const std::wstring& key : keys)
         {
-            std::wstring remainder = key.substr(finalSyl.size()); // "" for exact match
+            std::wstring remainder = key.substr(finalSeg.size()); // "" for exact match
             for (const std::wstring& ch : m_dict.Lookup(key))
             {
                 std::wstring commit = locked + ch;
                 if (!seenCommits.insert(commit).second)
-                    continue; // already emitted this text with an earlier remainder
+                    continue; // already emitted this text via a greedier split
                 Candidate c;
                 c.display = commit + remainder;
                 c.commit  = std::move(commit);
@@ -565,36 +573,56 @@ void CTextService::BuildCandidates()
         return true;
     };
 
-    // ---- Tier 1: the whole buffer as a prefix of real dictionary keys. ----
-    if (!emit(std::wstring(), m_romanization))
-        return;
+    // ---- Enumerate every split: partition a prefix [0, consumed) of the buffer
+    // into leading exact keys (locked to their best character), leaving a
+    // non-empty final segment [consumed, n) to prefix-match. `seq` is the split's
+    // consumption profile: the leading key lengths followed by the final segment
+    // length (always summing to n). ----
+    struct Split { std::wstring locked; size_t consumed; std::vector<size_t> seq; };
+    std::vector<Split> splits;
+    const size_t kMaxSplits = 256; // safety valve against pathological fan-out
 
-    // ---- Tier 2: greedy segmentation, locking complete leading syllables. ----
-    std::wstring locked;   // committed Chinese for the fixed leading syllables
-    size_t i = 0;
-    while (i < m_romanization.size())
+    std::function<void(size_t, const std::wstring&, const std::vector<size_t>&)> gather =
+        [&](size_t pos, const std::wstring& locked, const std::vector<size_t>& lens)
     {
-        size_t len = m_dict.LongestExactPrefixLen(m_romanization, i);
-        // Never lock the trailing syllable: it must stay open for prefix
-        // matching (a fully typed final syllable is still a prefix of itself).
-        if (len == 0 || i + len >= m_romanization.size())
-            break;
+        if (splits.size() >= kMaxSplits)
+            return;
+        std::vector<size_t> seq = lens;
+        seq.push_back(n - pos);                       // the final segment's length
+        splits.push_back({ locked, pos, std::move(seq) }); // pos < n
 
-        const auto& chars = m_dict.Lookup(m_romanization.substr(i, len));
-        if (chars.empty())
-            break; // shouldn't happen (len came from an exact key), but be safe
-        locked += chars.front();
-        i += len;
-    }
+        // Extend by one more leading exact key, keeping the final segment
+        // non-empty (pos + len < n). Lengths are bounded by the longest exact
+        // key at this position.
+        size_t maxLen = m_dict.LongestExactPrefixLen(buf, pos);
+        for (size_t len = 1; len <= maxLen && pos + len < n; ++len)
+        {
+            std::wstring key = buf.substr(pos, len);
+            const auto& chars = m_dict.Lookup(key);
+            if (chars.empty())
+                continue; // not an exact key at this length
+            std::vector<size_t> nextLens = lens;
+            nextLens.push_back(len);
+            gather(pos + len, locked + chars.front(), nextLens);
+        }
+    };
+    gather(0, std::wstring(), std::vector<size_t>());
 
-    // With nothing locked, tier 2 would repeat tier 1's whole-buffer match, so
-    // only run it when leading syllables were actually locked off.
-    if (!locked.empty())
-    {
-        std::wstring finalSyl = m_romanization.substr(i);
-        if (!finalSyl.empty())
-            emit(locked, finalSyl);
-    }
+    // Greediest consumption first: compare the length sequences element by
+    // element, larger length wins. stable_sort keeps discovery order on ties.
+    std::stable_sort(splits.begin(), splits.end(),
+        [](const Split& a, const Split& b)
+        {
+            size_t m = std::min(a.seq.size(), b.seq.size());
+            for (size_t i = 0; i < m; ++i)
+                if (a.seq[i] != b.seq[i])
+                    return a.seq[i] > b.seq[i];
+            return a.seq.size() < b.seq.size();
+        });
+
+    for (const Split& s : splits)
+        if (!emit(s.locked, buf.substr(s.consumed)))
+            return;
 }
 
 void CTextService::UpdateCandidates(ITfContext* pic)
@@ -783,19 +811,14 @@ void CTextService::ResetSelection()
 }
 
 // Number of candidate columns currently displayed from m_pageBase. Always 1 in
-// 1D mode; up to kMaxCols in 2D mode. Kept identical to the window's own layout
-// math so navigation and hit-testing agree.
+// 1D mode. In 2D mode the count is whatever the window can actually fit on
+// screen (capped by kMaxCols and the monitor width), queried from the window so
+// navigation never lands on a column that was dropped for width.
 size_t CTextService::ColsShown() const
 {
     if (!m_twoD)
         return 1;
-    size_t n = m_candidates.size();
-    if (m_pageBase >= n)
-        return 1;
-    size_t cols = (n - m_pageBase + kPageSize - 1) / kPageSize; // ceil
-    if (cols > kMaxCols) cols = kMaxCols;
-    if (cols < 1) cols = 1;
-    return cols;
+    return m_candWnd.ColumnsThatFit(m_pageBase, m_twoD, kMaxCols);
 }
 
 // First global index of the column/page that holds the current selection.
@@ -867,22 +890,18 @@ void CTextService::SelRight()
         return;
     }
 
-    size_t col  = (m_sel - m_pageBase) / kPageSize;
-    size_t cols = ColsShown();
-    if (col + 1 < cols)
-    {
-        size_t target = m_sel + kPageSize;      // same row, next column
-        if (target >= n) target = n - 1;        // clamp into a partial column
-        m_sel = target;
-    }
-    else if (m_pageBase + cols * kPageSize < n)
-    {
-        // At the rightmost visible column: scroll the grid one column right.
-        m_pageBase += kPageSize;
-        size_t target = m_sel + kPageSize;
-        if (target >= n) target = n - 1;
-        m_sel = target;
-    }
+    // Move to the same row of the next column, if one exists, then scroll so the
+    // selection is on screen. Columns are aligned to kPageSize globally, so the
+    // selection's column starts at (m_sel / kPageSize) * kPageSize.
+    size_t colStart = (m_sel / kPageSize) * kPageSize;
+    size_t row      = m_sel - colStart;
+    size_t nextCol  = colStart + kPageSize;
+    if (nextCol >= n)
+        return; // no column to the right
+    size_t target = nextCol + row;
+    if (target >= n) target = n - 1; // clamp into a partial column
+    m_sel = target;
+    ScrollSelectionIntoView();
 }
 
 void CTextService::SelLeft()
@@ -890,17 +909,30 @@ void CTextService::SelLeft()
     if (m_candidates.empty()) return;
     if (!m_twoD) return; // left has no effect before 2D is engaged
 
-    size_t col = (m_sel - m_pageBase) / kPageSize;
-    if (col > 0)
+    size_t colStart = (m_sel / kPageSize) * kPageSize;
+    if (colStart < kPageSize)
+        return; // already in the leftmost column
+    m_sel -= kPageSize; // same row, previous column
+    ScrollSelectionIntoView();
+}
+
+// Adjusts m_pageBase so the selected candidate's column is within the columns
+// the window actually shows. The visible column count is width-capped and
+// depends on m_pageBase, so scroll one column at a time and re-query until the
+// selection fits; ColsShown() is always >= 1, so this terminates.
+void CTextService::ScrollSelectionIntoView()
+{
+    size_t colStart = (m_sel / kPageSize) * kPageSize;
+
+    // Selection left of the viewport: make its column the leftmost.
+    if (colStart < m_pageBase)
     {
-        m_sel -= kPageSize; // same row, previous column
+        m_pageBase = colStart;
+        return;
     }
-    else if (m_pageBase >= kPageSize)
-    {
-        // Leftmost column: scroll the grid one column left.
-        m_pageBase -= kPageSize;
-        m_sel      -= kPageSize;
-    }
+    // Selection past the last visible column: advance the viewport until it fits.
+    while (colStart >= m_pageBase + ColsShown() * kPageSize)
+        m_pageBase += kPageSize;
 }
 
 void CTextService::PageDown()
