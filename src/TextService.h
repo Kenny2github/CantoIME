@@ -171,6 +171,7 @@ private:
     bool m_chineseMode = true;
 
     void ToggleInputMode(); // flip Chinese/English, commit any composition first
+    void RefreshLangBarIcons(); // re-query button icons (e.g. on a theme change)
 
     // Lone-Shift detection. TSF does not reliably deliver modifier-only keys to
     // the key-event sink, so a low-level keyboard hook watches Shift instead and
