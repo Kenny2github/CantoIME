@@ -218,7 +218,9 @@ void CTextService::AddLangBarButtons()
         TF_LBI_STYLE_BTN_BUTTON | TF_LBI_STYLE_SHOWNINTRAY, 0, L"CantoIME");
     if (m_pMainButton)
     {
-        m_pMainButton->SetGlyph([] { return std::wstring(L"粵"); }); // Yue (Cantonese)
+        // U+7CB5 粵 (Yue / Cantonese). Use an escape, not a literal, so the
+        // glyph does not depend on the source-file encoding MSVC assumes.
+        m_pMainButton->SetGlyph([] { return std::wstring(L"\u7CB5"); }); // 粵
         pMgr->AddItem(m_pMainButton);
     }
 
@@ -226,11 +228,15 @@ void CTextService::AddLangBarButtons()
     // the standard conversion-mode indicator.
     m_pModeButton = new (std::nothrow) CLangBarButton(
         CLSID_CantoIME, GUID_LBI_INPUTMODE,
-        TF_LBI_STYLE_BTN_BUTTON | TF_LBI_STYLE_SHOWNINTRAY, 1, L"Chinese / English");
+        TF_LBI_STYLE_BTN_BUTTON | TF_LBI_STYLE_SHOWNINTRAY, 1, L"Input mode");
     if (m_pModeButton)
     {
+        // 中 = 中 (Chinese), 英 = 英 (English).
         m_pModeButton->SetGlyph([this] {
-            return std::wstring(m_chineseMode ? L"中" : L"英"); // 中 / 英
+            return std::wstring(m_chineseMode ? L"\u4E2D" : L"\u82F1"); // 中 / 英
+        });
+        m_pModeButton->SetTooltip([this] {
+            return std::wstring(m_chineseMode ? L"Chinese mode" : L"English mode");
         });
         m_pModeButton->SetOnClick([this] { ToggleInputMode(); });
         pMgr->AddItem(m_pModeButton);
@@ -400,6 +406,12 @@ static bool CtrlOrAltDown()
            (GetKeyState(VK_MENU)    & 0x8000);
 }
 
+// TSF may report Shift as VK_SHIFT or the sided VK_LSHIFT / VK_RSHIFT.
+static bool IsShiftVK(WPARAM vk)
+{
+    return vk == VK_SHIFT || vk == VK_LSHIFT || vk == VK_RSHIFT;
+}
+
 // Decides whether we would consume a given key, WITHOUT mutating state.
 STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* /*pic*/, WPARAM wParam, LPARAM /*lParam*/, BOOL* pfEaten)
 {
@@ -409,7 +421,7 @@ STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* /*pic*/, WPARAM wParam, LPA
 
     // Track a lone Shift for the input-mode toggle: Shift arms it; any other key
     // disarms it (so Shift + letter still types normally, no toggle).
-    m_shiftArmed = (wParam == VK_SHIFT);
+    m_shiftArmed = IsShiftVK(wParam);
 
     if (CtrlOrAltDown())
         return S_OK; // never intercept shortcuts
@@ -563,22 +575,29 @@ STDMETHODIMP CTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM /*lP
 
 STDMETHODIMP CTextService::OnTestKeyUp(ITfContext*, WPARAM wParam, LPARAM, BOOL* pfEaten)
 {
-    if (pfEaten) *pfEaten = FALSE;
-
-    // A lone Shift press+release toggles Chinese/English. The key-up is reported
-    // for every key, so we act here and leave the key un-eaten so Shift still
-    // works normally for the app.
-    if (wParam == VK_SHIFT && m_shiftArmed)
-    {
-        m_shiftArmed = false;
-        ToggleInputMode();
-    }
+    if (pfEaten == nullptr)
+        return E_INVALIDARG;
+    // Eat the release of a lone Shift so the real OnKeyUp fires and performs the
+    // mode toggle. We only ever eat a Shift that was pressed and released alone
+    // (m_shiftArmed), so Shift + another key is untouched and capital letters
+    // keep working. We never eat the Shift *down*, so modifiers still reach apps.
+    *pfEaten = (IsShiftVK(wParam) && m_shiftArmed) ? TRUE : FALSE;
     return S_OK;
 }
 
-STDMETHODIMP CTextService::OnKeyUp(ITfContext*, WPARAM, LPARAM, BOOL* pfEaten)
+STDMETHODIMP CTextService::OnKeyUp(ITfContext*, WPARAM wParam, LPARAM, BOOL* pfEaten)
 {
-    if (pfEaten) *pfEaten = FALSE;
+    if (pfEaten == nullptr)
+        return E_INVALIDARG;
+    *pfEaten = FALSE;
+
+    // A lone Shift press+release toggles Chinese/English input.
+    if (IsShiftVK(wParam) && m_shiftArmed)
+    {
+        m_shiftArmed = false;
+        ToggleInputMode();
+        *pfEaten = TRUE;
+    }
     return S_OK;
 }
 
