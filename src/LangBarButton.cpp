@@ -3,6 +3,7 @@
 #include "LangBarButton.h"
 #include "Globals.h"
 
+#include <olectl.h>   // CONNECT_E_* connection-point HRESULTs
 #include <new>
 
 // ---------------------------------------------------------------------------
