@@ -1,39 +1,40 @@
 # make-canto-icon.ps1
 #
-# Generates the 粵 (U+7CB5) branding icon: a neutral mid-gray glyph on a
-# transparent background, at a few sizes, as a classic 32bpp DIB .ico.
+# Generates the 粵 (U+7CB5) branding icon: a Windows-8-style black glyph on a
+# white box with a 1px 50%-black border, at a few sizes, 32bpp.
 #
-# It is deliberately plain. A third-party IME's brand icon cannot be theme-
-# inverted in the dark taskbar the way the built-in IMEs are (that is done by
-# Microsoft's IME host and gated on being a system IME - proven by pointing
-# CantoIME at a built-in IME's own icon; it still rendered un-inverted). So we
-# don't chase that: a fixed mid-gray reads on both light and dark. The icon is
-# assembled as a DIB by hand because Bitmap.GetHicon mangles the alpha channel.
-# The 中/英 mode icon is the one that themes live (see LangBarButton.cpp).
+# Emitted as a linkable .res (not an .rc) because rc.exe rejects an opaque DIB
+# icon (RC2176 "old DIB"), and the box must be a classic DIB - the modern input
+# indicator ignores PNG-encoded icons. The icon is built as a DIB by hand
+# because Bitmap.GetHicon mangles the alpha channel.
 #
-# Built by CMake on the Windows runner with Windows PowerShell 5.1.
+# Note: a third-party IME's brand icon can't be theme-inverted in the dark
+# taskbar the way the built-in IMEs are - that's done by Microsoft's IME host
+# and gated on being a system IME (proven). The 中/英 mode icon is the one that
+# themes live (LangBarButton.cpp). Built by CMake on the Windows runner.
 param([Parameter(Mandatory = $true)][string]$OutPath)
 
 Add-Type -AssemblyName System.Drawing
 
-# One 32bpp DIB icon image (BITMAPINFOHEADER + bottom-up BGRA + zero AND mask).
-function New-Image([int]$size) {
+# One 32bpp DIB image: white box, 50% gray border, black 粵 sized ~94% of tile.
+function New-Dib([int]$size) {
     $bmp = New-Object System.Drawing.Bitmap($size, $size,
            [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     $g.SmoothingMode     = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
     $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAlias
-    $g.Clear([System.Drawing.Color]::Transparent)
-    $font = New-Object System.Drawing.Font('Microsoft JhengHei', [math]::Round($size * 0.95),
+    $g.Clear([System.Drawing.Color]::White)
+    $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(128, 0, 0, 0), 1)
+    $g.DrawRectangle($pen, 0, 0, $size - 1, $size - 1); $pen.Dispose()
+    $font = New-Object System.Drawing.Font('Microsoft JhengHei', ($size * 1.05),
             [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
     $fmt = New-Object System.Drawing.StringFormat
     $fmt.Alignment = [System.Drawing.StringAlignment]::Center
     $fmt.LineAlignment = [System.Drawing.StringAlignment]::Center
     $fmt.FormatFlags = [System.Drawing.StringFormatFlags]::NoClip
-    $brush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, 150, 150, 150))
-    $g.DrawString([string][char]0x7CB5, $font, $brush,
+    $g.DrawString([string][char]0x7CB5, $font, [System.Drawing.Brushes]::Black,
         (New-Object System.Drawing.RectangleF(0, 0, $size, $size)), $fmt)
-    $brush.Dispose(); $font.Dispose(); $g.Dispose()
+    $font.Dispose(); $g.Dispose()
 
     $bd = $bmp.LockBits((New-Object System.Drawing.Rectangle(0, 0, $size, $size)),
         [System.Drawing.Imaging.ImageLockMode]::ReadOnly,
@@ -52,27 +53,41 @@ function New-Image([int]$size) {
     for ($y = 0; $y -lt $size; $y++) {                          # top-down -> bottom-up
         [Array]::Copy($buf, $y * $st, $xor, ($size - 1 - $y) * $size * 4, $size * 4)
     }
-    $and = New-Object byte[] ([int]([math]::Floor(($size + 31) / 32)) * 4 * $size)  # zero: alpha masks
+    $and = New-Object byte[] ([int]([math]::Floor(($size + 31) / 32)) * 4 * $size) # zero
     return ($hdr + $xor + $and)
 }
 
-$sizes = 16, 20, 24, 32, 40, 48
-$imgs = foreach ($s in $sizes) { , ([byte[]](New-Image $s)) }
+# Emits one Win32 resource entry (.res): ordinal type + name, then padded data.
+function Write-Res($bw, [int]$type, [int]$name, [byte[]]$data, [int]$mem) {
+    $bw.Write([uint32]$data.Length); $bw.Write([uint32]32)
+    $bw.Write([uint16]0xFFFF); $bw.Write([uint16]$type)
+    $bw.Write([uint16]0xFFFF); $bw.Write([uint16]$name)
+    $bw.Write([uint32]0); $bw.Write([uint16]$mem); $bw.Write([uint16]0x0409)
+    $bw.Write([uint32]0); $bw.Write([uint32]0)
+    if ($data.Length) { $bw.Write($data) }
+    $pad = (4 - ($data.Length % 4)) % 4; if ($pad) { $bw.Write((New-Object byte[] $pad)) }
+}
+
+$sizes = 48, 40, 32, 24, 20, 16
+$icons = @(); $id = 1
+foreach ($s in $sizes) { $icons += @{ Id = $id; S = $s; Data = (New-Dib $s) }; $id++ }
+
+# RT_GROUP_ICON directory referencing each RT_ICON image.
+$gms = New-Object System.IO.MemoryStream; $gw = New-Object System.IO.BinaryWriter($gms)
+$gw.Write([uint16]0); $gw.Write([uint16]1); $gw.Write([uint16]$icons.Count)
+foreach ($ic in $icons) {
+    $gw.Write([byte]$ic.S); $gw.Write([byte]$ic.S); $gw.Write([byte]0); $gw.Write([byte]0)
+    $gw.Write([uint16]1); $gw.Write([uint16]32)
+    $gw.Write([uint32]$ic.Data.Length); $gw.Write([uint16]$ic.Id)
+}
+$gw.Flush(); $grp = $gms.ToArray()
 
 $dir = [System.IO.Path]::GetDirectoryName($OutPath)
 if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-
-$out = New-Object System.IO.MemoryStream
-$bw  = New-Object System.IO.BinaryWriter($out)
-$bw.Write([uint16]0); $bw.Write([uint16]1); $bw.Write([uint16]$sizes.Count)
-$off = 6 + 16 * $sizes.Count
-for ($i = 0; $i -lt $sizes.Count; $i++) {
-    $s = $sizes[$i]
-    $bw.Write([byte]$s); $bw.Write([byte]$s); $bw.Write([byte]0); $bw.Write([byte]0)
-    $bw.Write([uint16]1); $bw.Write([uint16]32)
-    $bw.Write([uint32]$imgs[$i].Length); $bw.Write([uint32]$off); $off += $imgs[$i].Length
-}
-foreach ($im in $imgs) { $bw.Write($im) }
+$out = New-Object System.IO.MemoryStream; $bw = New-Object System.IO.BinaryWriter($out)
+Write-Res $bw 0 0 (New-Object byte[] 0) 0                       # 32-bit .res marker
+foreach ($ic in $icons) { Write-Res $bw 3 $ic.Id $ic.Data 0x1010 }  # RT_ICON
+Write-Res $bw 14 1 $grp 0x1030                                  # RT_GROUP_ICON (index 0)
 $bw.Flush()
 [System.IO.File]::WriteAllBytes($OutPath, $out.ToArray())
-Write-Host "Wrote $OutPath (gray 粵, 32bpp DIB, $($sizes.Count) sizes)"
+Write-Host "Wrote $OutPath (.res: $($icons.Count) icons)"
