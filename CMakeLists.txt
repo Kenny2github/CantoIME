@@ -47,30 +47,30 @@ set(CANTO_SOURCES
 )
 
 # Generate the 粵 profile icon (what the language indicator shows) at build time
-# as a linkable .res. We emit a .res rather than an .rc because rc.exe rejects
-# the hand-authored 8bpp / DIB icon format that matches the built-in IMEs
-# (RC2176 "old DIB"); a .res is linked verbatim, bypassing rc.exe. The glyph is
+# and compile it into every DLL via a small resource script. The glyph is
 # rasterized with the Windows fonts on the build machine.
-set(CANTO_RES "")
+set(CANTO_RC "")
 if(MSVC)
-    set(CANTO_RES "${CMAKE_CURRENT_BINARY_DIR}/canto.res")
+    set(CANTO_ICON "${CMAKE_CURRENT_BINARY_DIR}/canto.ico")
     add_custom_command(
-        OUTPUT ${CANTO_RES}
+        OUTPUT ${CANTO_ICON}
         COMMAND powershell -NoProfile -ExecutionPolicy Bypass
                 -File "${CMAKE_CURRENT_SOURCE_DIR}/tools/make-canto-icon.ps1"
-                -OutPath "${CANTO_RES}"
+                -OutPath "${CANTO_ICON}"
         DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tools/make-canto-icon.ps1"
-        COMMENT "Generating CantoIME profile icon resource (粵)"
+        COMMENT "Generating CantoIME profile icon (粵)"
         VERBATIM)
-    add_custom_target(canto_icon DEPENDS ${CANTO_RES})
-    # A .res added to a target's sources is passed straight to the linker.
-    set_source_files_properties(${CANTO_RES} PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE)
+    add_custom_target(canto_icon DEPENDS ${CANTO_ICON})
+    set(CANTO_RC "${CMAKE_CURRENT_BINARY_DIR}/canto.rc")
+    # The IME registers icon index 0; keep this the only ICON in the module.
+    file(GENERATE OUTPUT ${CANTO_RC} CONTENT "1 ICON \"${CANTO_ICON}\"\n")
+    set_source_files_properties(${CANTO_RC} PROPERTIES OBJECT_DEPENDS ${CANTO_ICON})
 endif()
 
 # Defines one variant DLL: CantoIME-<tag>.dll compiled with -DCANTO_VARIANT_<tag>.
 function(add_canto_variant tag)
     set(target "CantoIME-${tag}")
-    add_library(${target} SHARED ${CANTO_SOURCES} ${CANTO_RES})
+    add_library(${target} SHARED ${CANTO_SOURCES} ${CANTO_RC})
 
     # Force the output name (drop any "lib" prefix that some toolchains add).
     set_target_properties(${target} PROPERTIES
@@ -92,7 +92,7 @@ function(add_canto_variant tag)
         set_target_properties(${target} PROPERTIES
             LINK_FLAGS "/DEF:\"${CMAKE_CURRENT_SOURCE_DIR}/exports.def\"")
         target_compile_options(${target} PRIVATE /W4 /permissive-)
-        add_dependencies(${target} canto_icon) # generate the .res before linking
+        add_dependencies(${target} canto_icon) # generate the .ico before the .rc
     endif()
 
     # System import libraries. TSF interface GUIDs and CLSIDs come from the SDK's
