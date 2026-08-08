@@ -18,8 +18,10 @@ you can enable it under whichever locale(s) you use:
 The three are built from the same source; each is compiled with a
 `CANTO_VARIANT_*` define that selects its LANGID, description, CLSID, profile
 GUID, and window class, and each registers as an independent input method so
-they can be installed side by side. The installer lets you pick any combination,
-with **Hong Kong SAR** as the sole default.
+they can be registered independently. Because all three share one dictionary,
+the installer treats them as mutually exclusive: you pick **one** variant to
+install, with **Hong Kong SAR** as the default. (You can still register the
+other DLLs by hand if you want more than one.)
 
 > **Honest caveat:** this repository was authored on **macOS** and has **NOT
 > been compiled or tested on Windows**. It targets Windows 11 x64 and cannot be
@@ -178,14 +180,15 @@ iscc installer\setup.iss
 
 Produces `installer\Output\CantoIME-Setup.exe`. (The script expects the DLLs at
 `build\Release\CantoIME-*.dll`; adjust the `[Files]` source paths if you built
-elsewhere.) The wizard's component page lets you pick any combination of the
-three variants, with **Hong Kong SAR** checked by default.
+elsewhere.) The wizard shows the three variants as a radio group (mutually
+exclusive, since they share one dictionary), with **Hong Kong SAR** selected by
+default.
 
 ### 4. Install (as administrator)
 
-Run `CantoIME-Setup.exe`. Choose which variant(s) to install, then it installs
-the selected DLL(s) + shared dictionary to `C:\Program Files\CantoIME\`, writes
-the registry `DictionaryPath` value, and registers each chosen variant with
+Run `CantoIME-Setup.exe`. Choose which variant to install, then it installs that
+DLL + the shared dictionary to `C:\Program Files\CantoIME\`, writes the registry
+`DictionaryPath` value, and registers the chosen variant with
 64-bit `regsvr32 /s`.
 
 To register/unregister manually instead of using the installer, from an
