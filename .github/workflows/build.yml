@@ -1,7 +1,8 @@
 name: Build
 
-# Builds the TSF text service DLLs on a Windows runner and publishes them (plus
-# the sample dictionary) as an artifact.
+# Builds the TSF text service DLLs on a Windows runner, compiles the Inno Setup
+# installer, and publishes both as artifacts (DLLs + dictionary, and the
+# CantoIME-Setup.exe).
 #
 # Triggered on push only. A push to a PR's head branch still surfaces this run
 # as a check on the PR, so a separate pull_request trigger would just double the
@@ -33,4 +34,19 @@ jobs:
             build/Release/CantoIME-TW.dll
             build/Release/CantoIME-MO.dll
             build/Release/dictionary.txt
+          if-no-files-found: error
+
+      # Inno Setup is not preinstalled on windows-latest; Chocolatey is.
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: pwsh
+        run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\setup.iss'
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CantoIME-Setup
+          path: installer/Output/CantoIME-Setup.exe
           if-no-files-found: error
