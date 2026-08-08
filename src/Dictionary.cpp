@@ -7,6 +7,8 @@
 #endif
 #include <windows.h>
 #include <cwctype>
+#include <algorithm>
+#include <unordered_set>
 
 // Converts a UTF-8 byte buffer to a wide (UTF-16) string.
 static std::wstring Utf8ToWide(const char* data, int len)
@@ -111,9 +113,35 @@ bool Dictionary::Load(const std::wstring& path)
                 cands.push_back(line.substr(tokStart, s - tokStart));
         }
 
+        // Drop repeated characters within a key, preserving first-seen order.
+        // Several dictionary lines list their whole candidate set twice, which
+        // would otherwise surface every character as a duplicate candidate.
+        if (cands.size() > 1)
+        {
+            std::unordered_set<std::wstring> seen;
+            std::vector<std::wstring> unique;
+            unique.reserve(cands.size());
+            for (auto& c : cands)
+                if (seen.insert(c).second)
+                    unique.push_back(std::move(c));
+            cands = std::move(unique);
+        }
+
         if (!cands.empty())
+        {
+            if (key.size() > m_maxKeyLen)
+                m_maxKeyLen = key.size();
             m_map[key] = std::move(cands); // later duplicate keys override earlier
+        }
     }
+
+    // Build the sorted key list used for prefix scans. Done once per load so
+    // KeysWithPrefix can binary-search instead of scanning the whole map.
+    m_sortedKeys.clear();
+    m_sortedKeys.reserve(m_map.size());
+    for (const auto& kv : m_map)
+        m_sortedKeys.push_back(kv.first);
+    std::sort(m_sortedKeys.begin(), m_sortedKeys.end());
 
     return true;
 }
@@ -132,4 +160,48 @@ const std::vector<std::wstring>& Dictionary::Lookup(const std::wstring& pinyin) 
     if (it == m_map.end())
         return m_empty;
     return it->second;
+}
+
+bool Dictionary::HasExact(const std::wstring& pinyin) const
+{
+    return m_map.find(ToLower(pinyin)) != m_map.end();
+}
+
+std::vector<std::wstring> Dictionary::KeysWithPrefix(const std::wstring& prefix,
+                                                     size_t maxKeys) const
+{
+    std::vector<std::wstring> out;
+    if (prefix.empty() || maxKeys == 0)
+        return out;
+
+    std::wstring lo = ToLower(prefix);
+
+    // First key >= prefix; every key sharing the prefix is contiguous from here.
+    auto it = std::lower_bound(m_sortedKeys.begin(), m_sortedKeys.end(), lo);
+    for (; it != m_sortedKeys.end() && out.size() < maxKeys; ++it)
+    {
+        // Stop as soon as a key no longer starts with the prefix.
+        if (it->compare(0, lo.size(), lo) != 0)
+            break;
+        out.push_back(*it);
+    }
+    return out;
+}
+
+size_t Dictionary::LongestExactPrefixLen(const std::wstring& s, size_t start) const
+{
+    if (start >= s.size())
+        return 0;
+
+    size_t maxLen = s.size() - start;
+    if (m_maxKeyLen && maxLen > m_maxKeyLen)
+        maxLen = m_maxKeyLen;
+
+    // Longest wins: jyutping keys are short, so a top-down probe is cheap.
+    for (size_t len = maxLen; len >= 1; --len)
+    {
+        if (m_map.find(s.substr(start, len)) != m_map.end())
+            return len;
+    }
+    return 0;
 }
