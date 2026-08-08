@@ -28,6 +28,7 @@
 
 #include <msctf.h>
 #include <ctffunc.h>   // ITfContextView / display helpers live in msctf; kept for completeness
+#include <unordered_set>
 
 // ---------------------------------------------------------------------------
 // Construction / destruction
@@ -511,15 +512,23 @@ void CTextService::BuildCandidates()
         return;
 
     // ---- Prefix-match the final syllable. ----
+    // Keys arrive in ascending order, so the first time a given commit string
+    // is produced it carries the lexicographically smallest remainder. Keep
+    // only that one: the same Chinese text must not repeat under different
+    // trailing romanizations.
     std::vector<std::wstring> keys = m_dict.KeysWithPrefix(finalSyl, kMaxPrefixKeys);
+    std::unordered_set<std::wstring> seenCommits;
     for (const std::wstring& key : keys)
     {
         std::wstring remainder = key.substr(finalSyl.size()); // "" for exact match
         for (const std::wstring& ch : m_dict.Lookup(key))
         {
+            std::wstring commit = locked + ch;
+            if (!seenCommits.insert(commit).second)
+                continue; // already emitted this text with an earlier remainder
             Candidate c;
-            c.display = locked + ch + remainder;
-            c.commit  = locked + ch;
+            c.display = commit + remainder;
+            c.commit  = std::move(commit);
             m_candidates.push_back(std::move(c));
             if (m_candidates.size() >= kMaxCandidates)
                 return;
