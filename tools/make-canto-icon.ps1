@@ -126,12 +126,14 @@ function New-Dib32([int]$size, [byte[]]$gray) {
     return $img
 }
 
+# NOTE: rc.exe rejects hand-built 8bpp icon images (RC2176 "old DIB"), so we ship
+# only the 32bpp grayscale tiles. The tile is still grayscale (B=G=R), which is
+# what the shell keys its theme recolor on.
 $sizes = 48, 40, 32, 24, 20, 16
 $imgs = New-Object System.Collections.ArrayList
-foreach ($s in $sizes) { $g = Get-GrayTile $s; [void]$imgs.Add((New-Dib8  $s $g)) }
 foreach ($s in $sizes) { $g = Get-GrayTile $s; [void]$imgs.Add((New-Dib32 $s $g)) }
-$dims = @($sizes) + @($sizes)   # entry dimensions matching $imgs order
-$bpps = (@(8) * $sizes.Count) + (@(32) * $sizes.Count)
+$dims = @($sizes)
+$bpps = @(32) * $sizes.Count
 
 $dir = [System.IO.Path]::GetDirectoryName($OutPath)
 if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
