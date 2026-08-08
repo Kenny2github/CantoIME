@@ -890,22 +890,18 @@ void CTextService::SelRight()
         return;
     }
 
-    size_t col  = (m_sel - m_pageBase) / kPageSize;
-    size_t cols = ColsShown();
-    if (col + 1 < cols)
-    {
-        size_t target = m_sel + kPageSize;      // same row, next column
-        if (target >= n) target = n - 1;        // clamp into a partial column
-        m_sel = target;
-    }
-    else if (m_pageBase + cols * kPageSize < n)
-    {
-        // At the rightmost visible column: scroll the grid one column right.
-        m_pageBase += kPageSize;
-        size_t target = m_sel + kPageSize;
-        if (target >= n) target = n - 1;
-        m_sel = target;
-    }
+    // Move to the same row of the next column, if one exists, then scroll so the
+    // selection is on screen. Columns are aligned to kPageSize globally, so the
+    // selection's column starts at (m_sel / kPageSize) * kPageSize.
+    size_t colStart = (m_sel / kPageSize) * kPageSize;
+    size_t row      = m_sel - colStart;
+    size_t nextCol  = colStart + kPageSize;
+    if (nextCol >= n)
+        return; // no column to the right
+    size_t target = nextCol + row;
+    if (target >= n) target = n - 1; // clamp into a partial column
+    m_sel = target;
+    ScrollSelectionIntoView();
 }
 
 void CTextService::SelLeft()
@@ -913,17 +909,30 @@ void CTextService::SelLeft()
     if (m_candidates.empty()) return;
     if (!m_twoD) return; // left has no effect before 2D is engaged
 
-    size_t col = (m_sel - m_pageBase) / kPageSize;
-    if (col > 0)
+    size_t colStart = (m_sel / kPageSize) * kPageSize;
+    if (colStart < kPageSize)
+        return; // already in the leftmost column
+    m_sel -= kPageSize; // same row, previous column
+    ScrollSelectionIntoView();
+}
+
+// Adjusts m_pageBase so the selected candidate's column is within the columns
+// the window actually shows. The visible column count is width-capped and
+// depends on m_pageBase, so scroll one column at a time and re-query until the
+// selection fits; ColsShown() is always >= 1, so this terminates.
+void CTextService::ScrollSelectionIntoView()
+{
+    size_t colStart = (m_sel / kPageSize) * kPageSize;
+
+    // Selection left of the viewport: make its column the leftmost.
+    if (colStart < m_pageBase)
     {
-        m_sel -= kPageSize; // same row, previous column
+        m_pageBase = colStart;
+        return;
     }
-    else if (m_pageBase >= kPageSize)
-    {
-        // Leftmost column: scroll the grid one column left.
-        m_pageBase -= kPageSize;
-        m_sel      -= kPageSize;
-    }
+    // Selection past the last visible column: advance the viewport until it fits.
+    while (colStart >= m_pageBase + ColsShown() * kPageSize)
+        m_pageBase += kPageSize;
 }
 
 void CTextService::PageDown()

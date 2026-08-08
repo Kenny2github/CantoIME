@@ -119,6 +119,7 @@ private:
     void PageUp();                 // PgUp
     void RefreshCandView();        // push selection/paging state to the window
     size_t SelectedPageBase() const; // first index of the selected column/page
+    void ScrollSelectionIntoView(); // move m_pageBase so m_sel's column is shown
 
     // Callbacks wired into the candidate window.
     void OnCandidateClicked(size_t globalIndex); // mouse click accepts
