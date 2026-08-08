@@ -57,7 +57,9 @@ function Render-Glyph([int]$canvas,[double]$fontpx) {
 # Grayscale tile with the glyph scaled to fill ~(size-2)px (1px border margin),
 # centered, on a white box with a 50% gray border. Returns gray[y*size+x].
 function Get-GrayTile([int]$size) {
-    $target = $size - 2
+    # Fit the glyph's full (anti-aliased) extent to the tile; the solid strokes
+    # then land at ~94%, matching Quick's 速 (measured 30/32).
+    $target = $size
     $g1 = Render-Glyph ($size*3) $size          # measure ink at em=size
     $ink = Get-Ink $g1; $g1.Dispose()
     $scale = $target / [math]::Max($ink.W, $ink.H)
