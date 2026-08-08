@@ -15,7 +15,7 @@ function Render-Png([int]$size) {
            [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     $g.SmoothingMode     = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-    $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
+    $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAlias
     $g.Clear([System.Drawing.Color]::Transparent)
 
     # Font em close to the full box: a CJK glyph then fills ~90% of the icon.
@@ -26,9 +26,26 @@ function Render-Png([int]$size) {
     $fmt.Alignment     = [System.Drawing.StringAlignment]::Center
     $fmt.LineAlignment = [System.Drawing.StringAlignment]::Center
     $fmt.FormatFlags   = [System.Drawing.StringFormatFlags]::NoClip
-    $rect = New-Object System.Drawing.RectangleF(0, 0, $size, $size)
+    $glyph = [string][char]0x7CB5   # 粵
+    $rect  = New-Object System.Drawing.RectangleF(0, 0, $size, $size)
 
-    $g.DrawString([string][char]0x7CB5, $font, [System.Drawing.Brushes]::Black, $rect, $fmt)
+    # This is a static resource, so it can't follow the live theme. Draw a white
+    # glyph with a dark outline (white drawn at offsets in dark, then white on
+    # top) so it stays readable on both light and dark taskbars.
+    $dark = New-Object System.Drawing.SolidBrush(
+            [System.Drawing.Color]::FromArgb(235, 30, 30, 30))
+    $off = [math]::Max(1, [int]($size / 14))
+    foreach ($dx in -$off, 0, $off) {
+        foreach ($dy in -$off, 0, $off) {
+            if ($dx -ne 0 -or $dy -ne 0) {
+                $r = New-Object System.Drawing.RectangleF($dx, $dy, $size, $size)
+                $g.DrawString($glyph, $font, $dark, $r, $fmt)
+            }
+        }
+    }
+    $g.DrawString($glyph, $font, [System.Drawing.Brushes]::White, $rect, $fmt)
+
+    $dark.Dispose()
     $g.Dispose()
 
     $stream = New-Object System.IO.MemoryStream

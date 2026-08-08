@@ -10,60 +10,93 @@
 // Glyph -> HICON
 // ---------------------------------------------------------------------------
 
+// True when the taskbar/system UI is in dark mode, so glyphs should be light.
+static bool SystemUsesDarkTheme()
+{
+    HKEY hKey = nullptr;
+    DWORD light = 1, cb = sizeof(light), type = 0;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER,
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+            0, KEY_READ, &hKey) == ERROR_SUCCESS)
+    {
+        RegQueryValueExW(hKey, L"SystemUsesLightTheme", nullptr, &type,
+                         reinterpret_cast<LPBYTE>(&light), &cb);
+        RegCloseKey(hKey);
+    }
+    return (type == REG_DWORD && light == 0);
+}
+
 HICON MakeGlyphIcon(const std::wstring& glyph)
 {
     const int cx = GetSystemMetrics(SM_CXSMICON);
     const int cy = GetSystemMetrics(SM_CYSMICON);
 
-    HDC hdcScreen = GetDC(nullptr);
-    HDC hdcColor  = CreateCompatibleDC(hdcScreen);
-    HDC hdcMask   = CreateCompatibleDC(hdcScreen);
+    // Glyph colour follows the theme: near-black on light, near-white on dark.
+    const bool dark = SystemUsesDarkTheme();
+    const int  tone = dark ? 240 : 16;
 
-    HBITMAP hbmColor = CreateCompatibleBitmap(hdcScreen, cx, cy);
-    HBITMAP hbmMask  = CreateBitmap(cx, cy, 1, 1, nullptr);
+    // 32-bit top-down DIB so we own the alpha channel and get clean, halo-free
+    // anti-aliasing (the old 1-bit mask left grey edge pixels as a white fringe).
+    BITMAPINFO bmi = { 0 };
+    bmi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth       = cx;
+    bmi.bmiHeader.biHeight      = -cy; // top-down
+    bmi.bmiHeader.biPlanes      = 1;
+    bmi.bmiHeader.biBitCount    = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
 
-    HBITMAP oldColor = static_cast<HBITMAP>(SelectObject(hdcColor, hbmColor));
-    HBITMAP oldMask  = static_cast<HBITMAP>(SelectObject(hdcMask,  hbmMask));
+    void* bits = nullptr;
+    HDC hdcMem = CreateCompatibleDC(nullptr);
+    HBITMAP hDib = CreateDIBSection(hdcMem, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (!hDib) { DeleteDC(hdcMem); return nullptr; }
+    memset(bits, 0, static_cast<size_t>(cx) * cy * 4);
 
-    RECT rc = { 0, 0, cx, cy };
-
-    // Color plane: white background, glyph drawn in the system text color.
-    FillRect(hdcColor, &rc, static_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
+    HBITMAP oldBmp = static_cast<HBITMAP>(SelectObject(hdcMem, hDib));
 
     LOGFONTW lf = { 0 };
     lf.lfHeight  = -(cy - 1);
     lf.lfWeight  = FW_NORMAL;
     lf.lfCharSet = DEFAULT_CHARSET;
+    lf.lfQuality = ANTIALIASED_QUALITY; // grayscale AA (no ClearType colour fringe)
     wcscpy_s(lf.lfFaceName, L"Microsoft JhengHei");
     HFONT font = CreateFontIndirectW(&lf);
-    HFONT oldFont = static_cast<HFONT>(SelectObject(hdcColor, font));
-    SetBkMode(hdcColor, TRANSPARENT);
-    SetTextColor(hdcColor, GetSysColor(COLOR_WINDOWTEXT));
-    DrawTextW(hdcColor, glyph.c_str(), -1, &rc,
+    HFONT oldFont = static_cast<HFONT>(SelectObject(hdcMem, font));
+
+    // Draw the glyph white on the zeroed (black) DIB; the white intensity is the
+    // per-pixel coverage. GDI leaves the alpha byte at 0, so we rebuild it below.
+    RECT rc = { 0, 0, cx, cy };
+    SetBkMode(hdcMem, TRANSPARENT);
+    SetTextColor(hdcMem, RGB(255, 255, 255));
+    DrawTextW(hdcMem, glyph.c_str(), -1, &rc,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP | DT_NOPREFIX);
-    SelectObject(hdcColor, oldFont);
+
+    SelectObject(hdcMem, oldFont);
     DeleteObject(font);
+    GdiFlush();
 
-    // Mask plane: white (background) pixels become 1 (transparent), the glyph
-    // pixels become 0 (opaque). A mono blit keyed on the white bg color does it.
-    SetBkColor(hdcColor, RGB(255, 255, 255));
-    BitBlt(hdcMask, 0, 0, cx, cy, hdcColor, 0, 0, SRCCOPY);
+    // Convert coverage -> premultiplied BGRA in the theme tone.
+    BYTE* px = static_cast<BYTE*>(bits);
+    for (int i = 0; i < cx * cy; ++i, px += 4)
+    {
+        const int cov = px[2]; // R == G == B for grayscale AA
+        px[0] = static_cast<BYTE>(tone * cov / 255); // B (premultiplied)
+        px[1] = static_cast<BYTE>(tone * cov / 255); // G
+        px[2] = static_cast<BYTE>(tone * cov / 255); // R
+        px[3] = static_cast<BYTE>(cov);              // A
+    }
 
-    SelectObject(hdcColor, oldColor);
-    SelectObject(hdcMask,  oldMask);
+    SelectObject(hdcMem, oldBmp);
 
+    HBITMAP hMask = CreateBitmap(cx, cy, 1, 1, nullptr); // all-zero AND mask
     ICONINFO ii = { 0 };
     ii.fIcon    = TRUE;
-    ii.hbmColor = hbmColor;
-    ii.hbmMask  = hbmMask;
+    ii.hbmColor = hDib;
+    ii.hbmMask  = hMask;
     HICON hIcon = CreateIconIndirect(&ii); // copies the bitmaps
 
-    DeleteObject(hbmColor);
-    DeleteObject(hbmMask);
-    DeleteDC(hdcColor);
-    DeleteDC(hdcMask);
-    ReleaseDC(nullptr, hdcScreen);
-
+    DeleteObject(hMask);
+    DeleteObject(hDib);
+    DeleteDC(hdcMem);
     return hIcon;
 }
 

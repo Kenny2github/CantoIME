@@ -33,17 +33,18 @@
 
 #if defined(CANTO_VARIANT_HK)
 #  define TEXTSERVICE_LANGID  MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_HONGKONG)    // 0x0C04
-#  define TEXTSERVICE_DESC    L"CantoIME (Chinese, Traditional, Hong Kong SAR)"
 #  define CANTO_VARIANT_TAG   L"HK"
 #elif defined(CANTO_VARIANT_TW)
 #  define TEXTSERVICE_LANGID  MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_TRADITIONAL) // 0x0404
-#  define TEXTSERVICE_DESC    L"CantoIME (Chinese, Traditional, Taiwan)"
 #  define CANTO_VARIANT_TAG   L"TW"
 #elif defined(CANTO_VARIANT_MO)
 #  define TEXTSERVICE_LANGID  MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_MACAU)       // 0x1404
-#  define TEXTSERVICE_DESC    L"CantoIME (Chinese, Traditional, Macao SAR)"
 #  define CANTO_VARIANT_TAG   L"MO"
 #endif
+
+// Display name shown in the input switcher. The variant is already conveyed by
+// the Windows language it registers under, so this is just the product name.
+#define TEXTSERVICE_DESC    L"CantoIME"
 
 // ---------------------------------------------------------------------------
 // Text service identity
