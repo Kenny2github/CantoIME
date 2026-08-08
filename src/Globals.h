@@ -57,6 +57,12 @@ extern const CLSID CLSID_CantoIME;
 // variant (see Globals.cpp).
 extern const GUID GUID_Profile;
 
+// Language-bar item GUID for the main input-method button (the input-indicator
+// glyph). Language-bar items are keyed by (clsidService, guidItem); clsidService
+// is per-variant, so one shared item GUID is fine. The input-mode (中/英) button
+// uses the well-known GUID_LBI_INPUTMODE instead.
+extern const GUID GUID_CantoMainButton;
+
 // Icon index used when registering the profile (0 = default/no icon).
 #define TEXTSERVICE_ICON_INDEX 0
 

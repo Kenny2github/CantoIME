@@ -23,6 +23,8 @@
 #include <string>
 #include <vector>
 
+class CLangBarButton; // language-bar item buttons (see LangBarButton.h)
+
 class CTextService final :
     public ITfTextInputProcessorEx,
     public ITfThreadMgrEventSink,
@@ -162,6 +164,21 @@ private:
 
     // Context we are currently composing in (AddRef'd), for click/wheel commits.
     ITfContext* m_pContext = nullptr;
+
+    // English/Chinese input mode. Chinese (true) does romanization -> character
+    // conversion; English (false) passes letters straight through. Toggled by a
+    // lone Shift press/release or by clicking the input-mode language-bar button.
+    bool m_chineseMode = true;
+    bool m_shiftArmed  = false; // a lone Shift press is in progress
+
+    void ToggleInputMode(); // flip Chinese/English, commit any composition first
+
+    // Language-bar items: the main input-method button (粵) and the input-mode
+    // button (中/英). Registered in Activate, removed in Deactivate.
+    void AddLangBarButtons();
+    void RemoveLangBarButtons();
+    CLangBarButton* m_pMainButton = nullptr;
+    CLangBarButton* m_pModeButton = nullptr;
 
     Dictionary      m_dict;
     CandidateWindow m_candWnd;

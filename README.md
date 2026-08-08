@@ -56,6 +56,20 @@ other DLLs by hand if you want more than one.)
   candidate if any, otherwise the raw buffer) and then lets that key pass
   through to the app. (This is the documented, simplest-coherent choice.)
 
+### Chinese / English mode
+
+Like Bopomofo and other Chinese IMEs, CantoIME has a **Chinese (中)** and an
+**English (英)** mode, shown by an input-mode icon in the language bar next to
+the input indicator. In Chinese mode letters build a composition as above; in
+English mode letters pass straight through as plain English.
+
+- **Press and release Shift** (with no other key in between) toggles the mode.
+- **Clicking the 中 / 英 language-bar icon** toggles it too.
+- Switching to English while composing commits the current candidate first.
+
+The input indicator itself shows **粵** (Yue / Cantonese) when CantoIME is the
+active input method, in place of the generic 繁體.
+
 ---
 
 ## Dictionary (runtime customizable)
@@ -119,6 +133,7 @@ CantoIME/
     ├── TextService.h/.cpp  # ITfTextInputProcessorEx + key/thread/composition sinks
     ├── EditSession.h       # reusable ITfEditSession adapter (lambda callback)
     ├── CandidateWindow.h/.cpp  # owner-drawn GDI popup, CJK font
+    ├── LangBarButton.h/.cpp    # language-bar buttons (粵 icon, 中/英 mode toggle)
     └── Dictionary.h/.cpp   # UTF-8 loader + lookup + reload
 ```
 
