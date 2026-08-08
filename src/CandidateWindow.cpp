@@ -123,36 +123,45 @@ static std::wstring RowText(size_t row, const std::wstring& cand)
     return std::to_wstring(row + 1) + L"  " + cand;
 }
 
-// Recomputes the column geometry for the current view and, if visible, resizes
-// and repositions the popup at its anchor (clamped to the monitor work area).
-void CandidateWindow::Relayout()
+int CandidateWindow::AvailWidth() const
 {
-    m_cols.clear();
-    m_totalW = 0;
-    m_totalH = 0;
+    HMONITOR hMon = MonitorFromPoint(m_anchor, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi = { sizeof(mi) };
+    if (GetMonitorInfoW(hMon, &mi))
+        return mi.rcWork.right - mi.rcWork.left;
+    return GetSystemMetrics(SM_CXSCREEN);
+}
 
+// Lays out the columns from pageBase, adding them left to right until the next
+// one would push the popup past the monitor's work-area width. At least one
+// column is always kept (even if a single column is wider than the screen).
+std::vector<CandidateWindow::Col> CandidateWindow::BuildCols(size_t pageBase,
+                                                             bool twoD,
+                                                             size_t maxCols) const
+{
+    std::vector<Col> cols;
     const size_t n = m_candidates.size();
-    if (n == 0 || !m_hWnd)
-        return;
+    if (n == 0 || !m_hWnd || pageBase >= n)
+        return cols;
 
-    // How many columns to display, starting at m_pageBase.
-    size_t cols = 1;
-    if (m_twoD)
+    size_t colCap = 1;
+    if (twoD)
     {
-        size_t remaining = (m_pageBase < n) ? (n - m_pageBase) : 0;
-        cols = (remaining + kPageSize - 1) / kPageSize; // ceil
-        if (cols > m_maxCols) cols = m_maxCols;
-        if (cols < 1) cols = 1;
+        size_t remaining = n - pageBase;
+        colCap = (remaining + kPageSize - 1) / kPageSize; // ceil
+        if (maxCols >= 1 && colCap > maxCols) colCap = maxCols;
+        if (colCap < 1) colCap = 1;
     }
+
+    const int avail = AvailWidth();
 
     HDC hdc = GetDC(m_hWnd);
     HFONT old = static_cast<HFONT>(SelectObject(hdc, m_hFont));
 
     int x = kPadX;
-    size_t maxRows = 0;
-    for (size_t c = 0; c < cols; ++c)
+    for (size_t c = 0; c < colCap; ++c)
     {
-        size_t start = m_pageBase + c * kPageSize;
+        size_t start = pageBase + c * kPageSize;
         if (start >= n)
             break;
         size_t rows = n - start;
@@ -168,17 +177,46 @@ void CandidateWindow::Relayout()
         }
         colW += kPadX; // right padding inside the column
 
-        Col col{ x, colW, start, rows };
-        m_cols.push_back(col);
+        // Total popup width if this column is added (trailing pad, no trailing
+        // gap). Stop before overflowing the screen, but always keep column 0.
+        int totalIfAdded = x + colW + kPadX;
+        if (!cols.empty() && totalIfAdded > avail)
+            break;
+
+        cols.push_back(Col{ x, colW, start, rows });
         x += colW + kColGap;
-        if (rows > maxRows) maxRows = rows;
     }
 
     SelectObject(hdc, old);
     ReleaseDC(m_hWnd, hdc);
+    return cols;
+}
+
+size_t CandidateWindow::ColumnsThatFit(size_t pageBase, bool twoD, size_t maxCols) const
+{
+    size_t c = BuildCols(pageBase, twoD, maxCols).size();
+    return c < 1 ? 1 : c;
+}
+
+// Recomputes the column geometry for the current view and, if visible, resizes
+// and repositions the popup at its anchor (clamped to the monitor work area).
+void CandidateWindow::Relayout()
+{
+    m_cols.clear();
+    m_totalW = 0;
+    m_totalH = 0;
+
+    if (m_candidates.empty() || !m_hWnd)
+        return;
+
+    m_cols = BuildCols(m_pageBase, m_twoD, m_maxCols);
 
     if (m_cols.empty())
         return;
+
+    size_t maxRows = 0;
+    for (const Col& col : m_cols)
+        if (col.rows > maxRows) maxRows = col.rows;
 
     // Total width drops the trailing gap and adds the leading pad already in x0.
     m_totalW = m_cols.back().x + m_cols.back().w + kPadX;
