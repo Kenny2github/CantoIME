@@ -1,6 +1,8 @@
 ; exports.def
 ; Module-definition file: exports the standard COM in-proc server entry points.
-LIBRARY MinimalPinyinIME
+; No LIBRARY line: this .def is shared by every CantoIME variant DLL, each of
+; which has its own output name (CantoIME-HK/-TW/-MO). The EXPORTS below apply
+; to whichever DLL links against it.
 EXPORTS
     DllGetClassObject   PRIVATE
     DllCanUnloadNow     PRIVATE

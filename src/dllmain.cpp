@@ -1,11 +1,12 @@
 // dllmain.cpp
 //
-// DLL entry point, COM class factory, and self-registration for the Minimal
-// Pinyin IME text service.
+// DLL entry point, COM class factory, and self-registration for the CantoIME
+// text service.
 //
 // Registration performs three things:
 //   1. Register the in-proc COM server (HKCR\CLSID\{clsid}\InprocServer32).
-//   2. Register the TSF text service + language profile for LANGID 0x0404.
+//   2. Register the TSF text service + language profile for this variant's
+//      LANGID (TEXTSERVICE_LANGID: HK 0x0C04, TW 0x0404, or MO 0x1404).
 //   3. Register TSF categories, including the Windows-11-critical
 //      IMMERSIVESUPPORT and SYSTRAYSUPPORT capabilities so the IME works in
 //      modern (UWP / packaged / store) apps and the systray shows it.
@@ -102,7 +103,7 @@ STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv)
         return E_INVALIDARG;
     *ppv = nullptr;
 
-    if (!IsEqualCLSID(rclsid, CLSID_MinimalPinyinIME))
+    if (!IsEqualCLSID(rclsid, CLSID_CantoIME))
         return CLASS_E_CLASSNOTAVAILABLE;
 
     CClassFactory* pFactory = new (std::nothrow) CClassFactory();
@@ -153,7 +154,7 @@ static LONG SetRegKeyValue(HKEY root, const std::wstring& subkey,
 // Registers HKCR\CLSID\{clsid}\InprocServer32 pointing at this DLL.
 static HRESULT RegisterInprocServer()
 {
-    std::wstring clsid = GuidToString(CLSID_MinimalPinyinIME);
+    std::wstring clsid = GuidToString(CLSID_CantoIME);
     std::wstring base  = L"CLSID\\" + clsid;
 
     // Friendly name on the CLSID key.
@@ -179,7 +180,7 @@ static HRESULT RegisterInprocServer()
 
 static void UnregisterInprocServer()
 {
-    std::wstring clsid = GuidToString(CLSID_MinimalPinyinIME);
+    std::wstring clsid = GuidToString(CLSID_CantoIME);
     std::wstring base  = L"CLSID\\" + clsid;
     // Delete the whole subtree (InprocServer32 then the CLSID key).
     RegDeleteKeyW(HKEY_CLASSES_ROOT, (base + L"\\InprocServer32").c_str());
@@ -196,14 +197,14 @@ static HRESULT RegisterProfile()
     if (FAILED(hr))
         return hr;
 
-    hr = pProfiles->Register(CLSID_MinimalPinyinIME);
+    hr = pProfiles->Register(CLSID_CantoIME);
     if (SUCCEEDED(hr))
     {
         wchar_t module[MAX_PATH] = { 0 };
         GetModuleFileNameW(g_hInst, module, MAX_PATH);
 
         hr = pProfiles->AddLanguageProfile(
-            CLSID_MinimalPinyinIME,
+            CLSID_CantoIME,
             TEXTSERVICE_LANGID,
             GUID_Profile,
             TEXTSERVICE_DESC,
@@ -224,7 +225,7 @@ static void UnregisterProfile()
                                    CLSCTX_INPROC_SERVER, IID_ITfInputProcessorProfiles,
                                    reinterpret_cast<void**>(&pProfiles))))
     {
-        pProfiles->Unregister(CLSID_MinimalPinyinIME);
+        pProfiles->Unregister(CLSID_CantoIME);
         pProfiles->Release();
     }
 }
@@ -240,22 +241,22 @@ static HRESULT RegisterCategories()
         return hr;
 
     // Keyboard TIP category (marks us as a keyboard-style input processor).
-    hr = pCategoryMgr->RegisterCategory(CLSID_MinimalPinyinIME,
+    hr = pCategoryMgr->RegisterCategory(CLSID_CantoIME,
                                         GUID_TFCAT_TIP_KEYBOARD,
-                                        CLSID_MinimalPinyinIME);
+                                        CLSID_CantoIME);
 
     // Windows 8+/10/11: declare immersive (UWP / packaged app) support so the
     // IME is usable in modern apps.
     if (SUCCEEDED(hr))
-        hr = pCategoryMgr->RegisterCategory(CLSID_MinimalPinyinIME,
+        hr = pCategoryMgr->RegisterCategory(CLSID_CantoIME,
                                             GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT,
-                                            CLSID_MinimalPinyinIME);
+                                            CLSID_CantoIME);
 
     // Declare systray support so the IME appears in the input indicator.
     if (SUCCEEDED(hr))
-        hr = pCategoryMgr->RegisterCategory(CLSID_MinimalPinyinIME,
+        hr = pCategoryMgr->RegisterCategory(CLSID_CantoIME,
                                             GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT,
-                                            CLSID_MinimalPinyinIME);
+                                            CLSID_CantoIME);
 
     pCategoryMgr->Release();
     return hr;
@@ -268,12 +269,12 @@ static void UnregisterCategories()
                                    CLSCTX_INPROC_SERVER, IID_ITfCategoryMgr,
                                    reinterpret_cast<void**>(&pCategoryMgr))))
     {
-        pCategoryMgr->UnregisterCategory(CLSID_MinimalPinyinIME,
-                                         GUID_TFCAT_TIP_KEYBOARD, CLSID_MinimalPinyinIME);
-        pCategoryMgr->UnregisterCategory(CLSID_MinimalPinyinIME,
-                                         GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT, CLSID_MinimalPinyinIME);
-        pCategoryMgr->UnregisterCategory(CLSID_MinimalPinyinIME,
-                                         GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT, CLSID_MinimalPinyinIME);
+        pCategoryMgr->UnregisterCategory(CLSID_CantoIME,
+                                         GUID_TFCAT_TIP_KEYBOARD, CLSID_CantoIME);
+        pCategoryMgr->UnregisterCategory(CLSID_CantoIME,
+                                         GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT, CLSID_CantoIME);
+        pCategoryMgr->UnregisterCategory(CLSID_CantoIME,
+                                         GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT, CLSID_CantoIME);
         pCategoryMgr->Release();
     }
 }
@@ -290,18 +291,18 @@ STDAPI DllRegisterServer()
 
     HRESULT hr = RegisterInprocServer();
     if (FAILED(hr))
-        OutputDebugStringW(L"[MPIME] RegisterInprocServer failed\n");
+        OutputDebugStringW(L"[CantoIME] RegisterInprocServer failed\n");
     if (SUCCEEDED(hr))
     {
         hr = RegisterProfile();
         if (FAILED(hr))
-            OutputDebugStringW(L"[MPIME] RegisterProfile failed\n");
+            OutputDebugStringW(L"[CantoIME] RegisterProfile failed\n");
     }
     if (SUCCEEDED(hr))
     {
         hr = RegisterCategories();
         if (FAILED(hr))
-            OutputDebugStringW(L"[MPIME] RegisterCategories failed\n");
+            OutputDebugStringW(L"[CantoIME] RegisterCategories failed\n");
     }
 
     if (FAILED(hr))

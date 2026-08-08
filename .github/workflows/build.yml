@@ -1,10 +1,14 @@
 name: Build
 
-# Builds the TSF text service DLL on a Windows runner for every push and PR,
-# and publishes the compiled DLL (plus the sample dictionary) as an artifact.
+# Builds the TSF text service DLLs on a Windows runner, compiles the Inno Setup
+# installer, and publishes both as artifacts (DLLs + dictionary, and the
+# CantoIME-Setup.exe).
+#
+# Triggered on push only. A push to a PR's head branch still surfaces this run
+# as a check on the PR, so a separate pull_request trigger would just double the
+# runs (and burn action minutes) for no added coverage.
 on:
   push:
-  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -21,11 +25,29 @@ jobs:
       - name: Build (Release)
         run: cmake --build build --config Release
 
-      - name: Upload DLL artifact
+      # Inno Setup is not preinstalled on windows-latest; Chocolatey is.
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: pwsh
+        run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\setup.iss'
+
+      # Collect the DLLs, dictionary, and installer into one flat folder so they
+      # ship as a single artifact.
+      - name: Stage artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item build\Release\CantoIME-HK.dll, `
+                    build\Release\CantoIME-TW.dll, `
+                    build\Release\CantoIME-MO.dll, `
+                    build\Release\dictionary.txt, `
+                    installer\Output\CantoIME-Setup.exe dist\
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MinimalPinyinIME-x64
-          path: |
-            build/Release/MinimalPinyinIME.dll
-            build/Release/dictionary.txt
+          name: CantoIME-x64
+          path: dist/
           if-no-files-found: error
