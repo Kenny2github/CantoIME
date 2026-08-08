@@ -29,23 +29,11 @@ function Render-Png([int]$size) {
     $glyph = [string][char]0x7CB5   # 粵
     $rect  = New-Object System.Drawing.RectangleF(0, 0, $size, $size)
 
-    # This is a static resource, so it can't follow the live theme. Draw a white
-    # glyph with a dark outline (white drawn at offsets in dark, then white on
-    # top) so it stays readable on both light and dark taskbars.
-    $dark = New-Object System.Drawing.SolidBrush(
-            [System.Drawing.Color]::FromArgb(235, 30, 30, 30))
-    $off = [math]::Max(1, [int]($size / 14))
-    foreach ($dx in -$off, 0, $off) {
-        foreach ($dy in -$off, 0, $off) {
-            if ($dx -ne 0 -or $dy -ne 0) {
-                $r = New-Object System.Drawing.RectangleF($dx, $dy, $size, $size)
-                $g.DrawString($glyph, $font, $dark, $r, $fmt)
-            }
-        }
-    }
+    # Draw a clean *monochrome white* glyph (white RGB, coverage in alpha, no
+    # colour or outline). The Windows shell tints monochrome language/tray icons
+    # to match the taskbar theme, so this transitions dark<->light with the OS
+    # the way the built-in IMEs do, even though the .ico itself is static.
     $g.DrawString($glyph, $font, [System.Drawing.Brushes]::White, $rect, $fmt)
-
-    $dark.Dispose()
     $g.Dispose()
 
     $stream = New-Object System.IO.MemoryStream
