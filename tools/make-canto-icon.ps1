@@ -18,8 +18,19 @@ function Render-Png([int]$size) {
     $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAlias
     $g.Clear([System.Drawing.Color]::Transparent)
 
-    # Font em close to the full box: a CJK glyph then fills ~90% of the icon.
-    $fs = [math]::Max(1, [math]::Round($size * 0.92))
+    # Microsoft's IME branding-icon spec (learn.microsoft.com/.../
+    # input-method-editor-requirements): "a white box in which a typographic
+    # glyph ... is placed. The glyph is black. The box includes an outer stroke
+    # of 1 pixel in black at 50% opacity." Black-and-white only, so the shell can
+    # theme (invert) it for the dark taskbar, exactly like the built-in IMEs.
+    $g.FillRectangle([System.Drawing.Brushes]::White, 0, 0, $size, $size)
+    $strokePen = New-Object System.Drawing.Pen(
+            [System.Drawing.Color]::FromArgb(128, 0, 0, 0), 1)
+    $g.DrawRectangle($strokePen, 0, 0, $size - 1, $size - 1)
+    $strokePen.Dispose()
+
+    # Black glyph, inset from the box edge so it sits inside the tile.
+    $fs = [math]::Max(1, [math]::Round($size * 0.72))
     $font = New-Object System.Drawing.Font('Microsoft JhengHei', $fs,
             [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
     $fmt = New-Object System.Drawing.StringFormat
@@ -28,12 +39,7 @@ function Render-Png([int]$size) {
     $fmt.FormatFlags   = [System.Drawing.StringFormatFlags]::NoClip
     $glyph = [string][char]0x7CB5   # 粵
     $rect  = New-Object System.Drawing.RectangleF(0, 0, $size, $size)
-
-    # Draw a clean *monochrome white* glyph (white RGB, coverage in alpha, no
-    # colour or outline). The Windows shell tints monochrome language/tray icons
-    # to match the taskbar theme, so this transitions dark<->light with the OS
-    # the way the built-in IMEs do, even though the .ico itself is static.
-    $g.DrawString($glyph, $font, [System.Drawing.Brushes]::White, $rect, $fmt)
+    $g.DrawString($glyph, $font, [System.Drawing.Brushes]::Black, $rect, $fmt)
     $g.Dispose()
 
     $stream = New-Object System.IO.MemoryStream
@@ -42,7 +48,8 @@ function Render-Png([int]$size) {
     return ,$stream.ToArray()
 }
 
-$sizes = 16, 20, 24, 32, 48
+# The sizes Microsoft's guidelines call for.
+$sizes = 16, 20, 24, 32, 40, 48
 $images = @()
 foreach ($s in $sizes) { $images += ,(Render-Png $s) }
 
