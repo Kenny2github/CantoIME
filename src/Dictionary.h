@@ -1,9 +1,9 @@
 // Dictionary.h
 //
-// Runtime pinyin -> character dictionary.
+// Runtime romanization -> character dictionary.
 //
 // The dictionary is a plain UTF-8 text file. Each line is:
-//     pinyin<TAB or spaces>char1 char2 char3 ...
+//     romanization<TAB or spaces>char1 char2 char3 ...
 // Lines beginning with '#' (after optional leading whitespace) are comments.
 // A UTF-8 BOM at the start of the file is tolerated.
 
@@ -26,13 +26,13 @@ public:
     // have never been given a path.
     bool Reload();
 
-    // Looks up an exact pinyin key. Returns the candidate list, or an empty
+    // Looks up an exact romanization key. Returns the candidate list, or an empty
     // vector if the key is not present. The comparison is case-insensitive
     // (keys are stored lowercased).
-    const std::vector<std::wstring>& Lookup(const std::wstring& pinyin) const;
+    const std::vector<std::wstring>& Lookup(const std::wstring& romanization) const;
 
     // True if the exact key exists.
-    bool HasExact(const std::wstring& pinyin) const;
+    bool HasExact(const std::wstring& romanization) const;
 
     // Returns keys (in sorted order) that begin with the given prefix, up to
     // maxKeys results. An empty prefix returns nothing. Case-insensitive.

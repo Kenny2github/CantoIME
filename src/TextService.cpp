@@ -4,7 +4,7 @@
 //
 // KEY HANDLING SUMMARY (documented behavior):
 //   While NOT composing:
-//     - a-z         : start a composition, begin the pinyin buffer, eat key.
+//     - a-z         : start a composition, begin the romanization buffer, eat key.
 //     - anything    : pass through (not eaten).
 //   While composing:
 //     - a-z         : append to buffer, refresh candidates, eat key.
@@ -12,10 +12,10 @@
 //                     composition. Eat key. (If not composing, pass through.)
 //     - 1..9        : if a candidate exists at that index, commit it, eat key;
 //                     otherwise the digit is treated as a normal keystroke and
-//                     appended is NOT done (digits are never part of pinyin),
+//                     appended is NOT done (digits are never part of romanization),
 //                     so we commit the raw buffer and let the digit pass.
 //     - Space       : commit first candidate; if none, commit raw buffer.
-//     - Enter       : commit the raw typed pinyin text as-is.
+//     - Enter       : commit the raw typed romanization text as-is.
 //     - Esc         : cancel composition, clear buffer, eat key.
 //     - Any other    : SIMPLEST COHERENT CHOICE -> commit the current best
 //                     result (first candidate if any, else raw buffer), then
@@ -167,7 +167,7 @@ STDMETHODIMP CTextService::Deactivate()
     RemoveWheelHook();
     ClearContext();
     m_candWnd.Hide();
-    m_pinyin.clear();
+    m_romanization.clear();
     m_candidates.clear();
     ResetSelection();
     m_twoD = false;
@@ -266,7 +266,7 @@ STDMETHODIMP CTextService::OnSetFocus(ITfDocumentMgr* /*pdimFocus*/, ITfDocument
     RemoveWheelHook();
     ClearContext();
     m_candWnd.Hide();
-    m_pinyin.clear();
+    m_romanization.clear();
     m_candidates.clear();
     ResetSelection();
     m_twoD = false;
@@ -310,7 +310,7 @@ static bool IsDigit1to9VK(WPARAM vk, int& digit)
     return false;
 }
 
-// Shift state check: we only treat plain letters (no Ctrl/Alt) as pinyin input.
+// Shift state check: we only treat plain letters (no Ctrl/Alt) as romanization input.
 static bool CtrlOrAltDown()
 {
     return (GetKeyState(VK_CONTROL) & 0x8000) ||
@@ -366,7 +366,7 @@ STDMETHODIMP CTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM /*lP
         {
             // Begin a new composition.
             wchar_t ch = static_cast<wchar_t>(towlower(static_cast<wint_t>(wParam)));
-            m_pinyin.assign(1, ch);
+            m_romanization.assign(1, ch);
             StartOrUpdateComposition(pic);
             UpdateCandidates(pic);
             *pfEaten = TRUE;
@@ -380,16 +380,16 @@ STDMETHODIMP CTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM /*lP
     if (IsLetterVK(wParam))
     {
         wchar_t ch = static_cast<wchar_t>(towlower(static_cast<wint_t>(wParam)));
-        m_pinyin.push_back(ch);
+        m_romanization.push_back(ch);
         StartOrUpdateComposition(pic);
         UpdateCandidates(pic);
         *pfEaten = TRUE;
     }
     else if (wParam == VK_BACK)
     {
-        if (!m_pinyin.empty())
-            m_pinyin.pop_back();
-        if (m_pinyin.empty())
+        if (!m_romanization.empty())
+            m_romanization.pop_back();
+        if (m_romanization.empty())
             CancelComposition(pic);
         else
         {
@@ -495,7 +495,7 @@ STDMETHODIMP CTextService::OnCompositionTerminated(TfEditCookie /*ec*/, ITfCompo
     RemoveWheelHook();
     ClearContext();
     m_candWnd.Hide();
-    m_pinyin.clear();
+    m_romanization.clear();
     m_candidates.clear();
     ResetSelection();
     m_twoD = false;
@@ -517,7 +517,7 @@ STDMETHODIMP CTextService::OnCompositionTerminated(TfEditCookie /*ec*/, ITfCompo
 static const size_t kMaxCandidates = 300;
 static const size_t kMaxPrefixKeys = 200;
 
-// Builds m_candidates from m_pinyin in two priority tiers:
+// Builds m_candidates from m_romanization in two priority tiers:
 //   1. Whole-buffer prefix match: every actual dictionary key the entire buffer
 //      is a prefix of. A real multi-syllable entry outranks any segmentation of
 //      shorter keys, e.g. "hah" surfaces 哈哈 (from key "haha") before 下下 (a
@@ -536,7 +536,7 @@ static const size_t kMaxPrefixKeys = 200;
 void CTextService::BuildCandidates()
 {
     m_candidates.clear();
-    if (m_pinyin.empty())
+    if (m_romanization.empty())
         return;
 
     std::unordered_set<std::wstring> seenCommits;
@@ -566,21 +566,21 @@ void CTextService::BuildCandidates()
     };
 
     // ---- Tier 1: the whole buffer as a prefix of real dictionary keys. ----
-    if (!emit(std::wstring(), m_pinyin))
+    if (!emit(std::wstring(), m_romanization))
         return;
 
     // ---- Tier 2: greedy segmentation, locking complete leading syllables. ----
     std::wstring locked;   // committed Chinese for the fixed leading syllables
     size_t i = 0;
-    while (i < m_pinyin.size())
+    while (i < m_romanization.size())
     {
-        size_t len = m_dict.LongestExactPrefixLen(m_pinyin, i);
+        size_t len = m_dict.LongestExactPrefixLen(m_romanization, i);
         // Never lock the trailing syllable: it must stay open for prefix
         // matching (a fully typed final syllable is still a prefix of itself).
-        if (len == 0 || i + len >= m_pinyin.size())
+        if (len == 0 || i + len >= m_romanization.size())
             break;
 
-        const auto& chars = m_dict.Lookup(m_pinyin.substr(i, len));
+        const auto& chars = m_dict.Lookup(m_romanization.substr(i, len));
         if (chars.empty())
             break; // shouldn't happen (len came from an exact key), but be safe
         locked += chars.front();
@@ -591,7 +591,7 @@ void CTextService::BuildCandidates()
     // only run it when leading syllables were actually locked off.
     if (!locked.empty())
     {
-        std::wstring finalSyl = m_pinyin.substr(i);
+        std::wstring finalSyl = m_romanization.substr(i);
         if (!finalSyl.empty())
             emit(locked, finalSyl);
     }
@@ -731,9 +731,9 @@ void CTextService::RequestEditSession(ITfContext* pic, EditAction action, const 
 void CTextService::StartOrUpdateComposition(ITfContext* pic)
 {
     if (!IsComposing())
-        RequestEditSession(pic, EditAction::Start, m_pinyin);
+        RequestEditSession(pic, EditAction::Start, m_romanization);
     else
-        RequestEditSession(pic, EditAction::Update, m_pinyin);
+        RequestEditSession(pic, EditAction::Update, m_romanization);
 }
 
 void CTextService::CommitCandidate(ITfContext* pic, size_t index)
@@ -747,7 +747,7 @@ void CTextService::CommitCandidate(ITfContext* pic, size_t index)
 
 void CTextService::CommitRaw(ITfContext* pic)
 {
-    std::wstring raw = m_pinyin;
+    std::wstring raw = m_romanization;
     RequestEditSession(pic, EditAction::Commit, raw);
     EndSelectionSession();
 }
@@ -765,7 +765,7 @@ void CTextService::EndSelectionSession()
 {
     RemoveWheelHook();
     ClearContext();
-    m_pinyin.clear();
+    m_romanization.clear();
     m_candidates.clear();
     ResetSelection();
     m_twoD = false;
@@ -1053,7 +1053,7 @@ HRESULT CTextService::DoStartComposition(TfEditCookie ec, ITfContext* pic)
 
     // Now write the initial buffer text into the composition range.
     if (m_pComposition)
-        DoUpdateComposition(ec, pic, m_pinyin);
+        DoUpdateComposition(ec, pic, m_romanization);
 
     pRange->Release();
     pInsert->Release();
@@ -1073,7 +1073,7 @@ HRESULT CTextService::DoUpdateComposition(TfEditCookie ec, ITfContext* pic, cons
     HRESULT hr = pRange->SetText(ec, 0, text.c_str(), static_cast<LONG>(text.length()));
 
     // Move the caret to the end of the composition so the user sees a caret
-    // after the displayed pinyin.
+    // after the displayed romanization.
     if (SUCCEEDED(hr))
     {
         ITfRange* pEnd = nullptr;
