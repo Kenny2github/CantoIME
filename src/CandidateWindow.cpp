@@ -109,10 +109,9 @@ void CandidateWindow::Measure(int& width, int& height)
     HFONT old = static_cast<HFONT>(SelectObject(hdc, m_hFont));
     for (size_t i = 0; i < m_candidates.size(); ++i)
     {
-        wchar_t buf[64];
-        swprintf_s(buf, L"%zu  %s", i + 1, m_candidates[i].c_str());
+        std::wstring row = std::to_wstring(i + 1) + L"  " + m_candidates[i];
         SIZE sz = { 0 };
-        GetTextExtentPoint32W(hdc, buf, static_cast<int>(wcslen(buf)), &sz);
+        GetTextExtentPoint32W(hdc, row.c_str(), static_cast<int>(row.size()), &sz);
         if (sz.cx > maxW)
             maxW = sz.cx;
     }
@@ -179,12 +178,11 @@ void CandidateWindow::OnPaint(HWND hWnd)
     int y = kPadY;
     for (size_t i = 0; i < m_candidates.size(); ++i)
     {
-        wchar_t buf[64];
         // e.g. "1  拼"
-        swprintf_s(buf, L"%zu  %s", i + 1, m_candidates[i].c_str());
+        std::wstring text = std::to_wstring(i + 1) + L"  " + m_candidates[i];
 
         RECT row = { kPadX, y, rc.right - kPadX, y + kLineH };
-        DrawTextW(hdc, buf, -1, &row,
+        DrawTextW(hdc, text.c_str(), -1, &row,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         y += kLineH;
     }

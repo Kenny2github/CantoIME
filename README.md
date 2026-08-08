@@ -47,7 +47,11 @@ pinyin<TAB or spaces>char1 char2 char3 ...
 ```
 
 Candidates are space-separated. Lines beginning with `#` are comments. Matching
-is exact and case-insensitive; there is no tone input.
+is case-insensitive; there is no tone input. The final (still-open) syllable is
+matched by **prefix**: typing `ga` surfaces every key beginning with `ga`, and a
+prefix-only match shows its leftover romanization after the character (e.g. with
+`gao` → 高, typing `ga` displays `高o`). Any leading syllables in a multi-syllable
+buffer must be **exact** keys; only the last syllable is prefix-matched.
 
 ### Dictionary search order (documented)
 
@@ -205,18 +209,20 @@ also edit `dictionary.txt` in the repo before building/installing.
   with GDI (`DrawTextW`) using the CJK font "Microsoft JhengHei". It is
   positioned via `ITfContextView::GetTextExt` on the composition range (run
   inside a read edit session), with a caret/cursor-position fallback.
-- **Dictionary lookup.** The buffer is looked up exactly (case-insensitively) on
-  every keystroke; matches populate the candidate list.
+- **Dictionary lookup.** On every keystroke the buffer is segmented greedily:
+  leading syllables are locked as exact keys and the final syllable is
+  prefix-matched (see the dictionary format section). Matches populate the
+  candidate list, each carrying the Chinese text to commit plus the display
+  string (which may include the final syllable's leftover romanization).
 
 ---
 
 ## Known limitations (this is a sample)
 
 - **No tone input** and no fuzzy/pinyin correction.
-- **Exact-key lookup only** — no longest-prefix segmentation of multi-syllable
-  input; each buffer is matched as a single key.
-- **Single-character commit** — candidates are single Han characters; no phrase
-  candidates and **no user phrase learning**.
+- **Greedy segmentation.** Leading syllables are locked to their single best
+  character using a longest-exact-match scan; there is no per-syllable candidate
+  choice for the locked portion and no re-segmentation backtracking.
 - **Candidate paging is limited to the first 9** matches; no page up/down.
 - **Not DPI-aware**; the popup uses fixed pixel metrics.
 - The caret-position fallback (`GetCaretPos` -> `ClientToScreen` on the
