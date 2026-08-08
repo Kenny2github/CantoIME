@@ -47,24 +47,25 @@ set(CANTO_SOURCES
 )
 
 # Generate the 粵 profile icon (what the language indicator shows) at build time
-# and compile it into every DLL via a resource script. The glyph is rasterized
-# with the Windows fonts on the build machine.
+# as a linkable .res. We emit a .res rather than an .rc because rc.exe rejects
+# the hand-authored 8bpp / opaque-tile icon format that the shell needs to theme
+# the icon (RC2176 "old DIB"); a .res is linked verbatim, bypassing rc.exe. The
+# glyph is rasterized with the Windows fonts on the build machine.
 set(CANTO_RC "")
 if(MSVC)
-    set(CANTO_ICON "${CMAKE_CURRENT_BINARY_DIR}/canto.ico")
+    set(CANTO_RES "${CMAKE_CURRENT_BINARY_DIR}/canto.res")
     add_custom_command(
-        OUTPUT ${CANTO_ICON}
+        OUTPUT ${CANTO_RES}
         COMMAND powershell -NoProfile -ExecutionPolicy Bypass
                 -File "${CMAKE_CURRENT_SOURCE_DIR}/tools/make-canto-icon.ps1"
-                -OutPath "${CANTO_ICON}"
+                -OutPath "${CANTO_RES}"
         DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tools/make-canto-icon.ps1"
-        COMMENT "Generating CantoIME profile icon (粵)"
+        COMMENT "Generating CantoIME profile icon resource (粵)"
         VERBATIM)
-    add_custom_target(canto_icon DEPENDS ${CANTO_ICON})
-    set(CANTO_RC "${CMAKE_CURRENT_BINARY_DIR}/canto.rc")
-    # The IME registers icon index 0; keep this the only ICON in the module.
-    file(GENERATE OUTPUT ${CANTO_RC} CONTENT "1 ICON \"${CANTO_ICON}\"\n")
-    set_source_files_properties(${CANTO_RC} PROPERTIES OBJECT_DEPENDS ${CANTO_ICON})
+    add_custom_target(canto_icon DEPENDS ${CANTO_RES})
+    # A .res added to a target's sources is passed straight to the linker.
+    set(CANTO_RC "${CANTO_RES}")
+    set_source_files_properties(${CANTO_RES} PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE)
 endif()
 
 # Defines one variant DLL: CantoIME-<tag>.dll compiled with -DCANTO_VARIANT_<tag>.
