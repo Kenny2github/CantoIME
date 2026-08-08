@@ -1,11 +1,25 @@
-# Minimal Pinyin IME (Sample)
+# CantoIME
 
 A minimal, buildable Windows 11 **TSF (Text Services Framework)** text service
 that behaves like Microsoft Bopomofo in HanYu Pinyin mode, but with a
 **customizable pinyin -> character dictionary loaded at runtime** from a plain
-text file. It is an in-proc COM DLL (`MinimalPinyinIME.dll`) registered under
-LANGID `0x0404` (zh-TW), so it shows up alongside Chinese (Traditional) input
-methods.
+text file. It is an in-proc COM DLL that registers as a Traditional Chinese
+input method.
+
+CantoIME ships **one DLL per Traditional Chinese variant Windows offers**, so
+you can enable it under whichever locale(s) you use:
+
+| DLL | Windows locale | LANGID |
+| --- | --- | --- |
+| `CantoIME-HK.dll` | Chinese (Traditional, Hong Kong SAR) | `0x0C04` |
+| `CantoIME-TW.dll` | Chinese (Traditional, Taiwan) | `0x0404` |
+| `CantoIME-MO.dll` | Chinese (Traditional, Macao SAR) | `0x1404` |
+
+The three are built from the same source; each is compiled with a
+`CANTO_VARIANT_*` define that selects its LANGID, description, CLSID, profile
+GUID, and window class, and each registers as an independent input method so
+they can be installed side by side. The installer lets you pick any combination,
+with **Hong Kong SAR** as the sole default.
 
 > **Honest caveat:** this repository was authored on **macOS** and has **NOT
 > been compiled or tested on Windows**. It targets Windows 11 x64 and cannot be
@@ -70,10 +84,10 @@ buffer must be **exact** keys; only the last syllable is prefix-matched.
 The DLL resolves the dictionary path at activation time, in this order:
 
 1. **Registry override** — REG_SZ value
-   `Software\MinimalPinyinIME\DictionaryPath`, checked first under **HKCU**,
+   `Software\CantoIME\DictionaryPath`, checked first under **HKCU**,
    then **HKLM**. (The installer writes the HKLM value.)
 2. **`dictionary.txt` next to the DLL.**
-3. **`%APPDATA%\MinimalPinyinIME\dictionary.txt`.**
+3. **`%APPDATA%\CantoIME\dictionary.txt`.**
 
 The first existing file wins. If none exist, no candidates are produced (typing
 still works; Enter commits the raw pinyin).
@@ -88,13 +102,13 @@ reloads on the next activation.
 
 ```
 pinyin-ime-sample/
-├── CMakeLists.txt          # builds MinimalPinyinIME.dll (x64, C++17, Unicode)
+├── CMakeLists.txt          # builds CantoIME-HK/-TW/-MO.dll (x64, C++17, Unicode)
 ├── exports.def             # exports the 4 COM entry points
 ├── dictionary.txt          # sample dictionary (~35 syllables)
 ├── LICENSE                 # MIT
 ├── README.md
 ├── installer/
-│   └── setup.iss           # Inno Setup script -> MinimalPinyinIME-Setup.exe
+│   └── setup.iss           # Inno Setup script -> CantoIME-Setup.exe
 └── src/
     ├── Globals.h/.cpp      # CLSID/GUIDs, LANGID, hInst, DLL refcount, path logic
     ├── dllmain.cpp         # DllMain, class factory, DllGetClassObject,
@@ -136,20 +150,25 @@ cmake -B build -A x64
 cmake --build build --config Release
 ```
 
-This produces `build\Release\MinimalPinyinIME.dll` and copies `dictionary.txt`
-next to it.
+This produces all three variant DLLs (`build\Release\CantoIME-HK.dll`,
+`CantoIME-TW.dll`, `CantoIME-MO.dll`) and copies `dictionary.txt` next to them.
 
 #### Alternative: build directly with `cl`
 
-From the x64 Native Tools prompt, in the repo root:
+From the x64 Native Tools prompt, in the repo root. Pick the variant with the
+matching `CANTO_VARIANT_*` define and output name (here: Hong Kong SAR):
 
 ```
 cl /nologo /LD /EHsc /std:c++17 /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN ^
+   /DCANTO_VARIANT_HK ^
    src\Globals.cpp src\Dictionary.cpp src\CandidateWindow.cpp ^
    src\TextService.cpp src\dllmain.cpp ^
-   /link /DEF:exports.def /OUT:MinimalPinyinIME.dll ^
+   /link /DEF:exports.def /OUT:CantoIME-HK.dll ^
    user32.lib gdi32.lib ole32.lib oleaut32.lib advapi32.lib uuid.lib shell32.lib imm32.lib
 ```
+
+Repeat with `/DCANTO_VARIANT_TW` / `/OUT:CantoIME-TW.dll` and
+`/DCANTO_VARIANT_MO` / `/OUT:CantoIME-MO.dll` for the other variants.
 
 ### 3. Build the installer (optional)
 
@@ -157,46 +176,49 @@ cl /nologo /LD /EHsc /std:c++17 /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN ^
 iscc installer\setup.iss
 ```
 
-Produces `installer\Output\MinimalPinyinIME-Setup.exe`. (The script expects the
-DLL at `build\Release\MinimalPinyinIME.dll`; adjust the `[Files]` source path if
-you built elsewhere.)
+Produces `installer\Output\CantoIME-Setup.exe`. (The script expects the DLLs at
+`build\Release\CantoIME-*.dll`; adjust the `[Files]` source paths if you built
+elsewhere.) The wizard's component page lets you pick any combination of the
+three variants, with **Hong Kong SAR** checked by default.
 
 ### 4. Install (as administrator)
 
-Run `MinimalPinyinIME-Setup.exe`. It installs the DLL + dictionary to
-`C:\Program Files\MinimalPinyinIME\`, writes the registry `DictionaryPath`
-value, and registers the IME with 64-bit `regsvr32 /s`.
+Run `CantoIME-Setup.exe`. Choose which variant(s) to install, then it installs
+the selected DLL(s) + shared dictionary to `C:\Program Files\CantoIME\`, writes
+the registry `DictionaryPath` value, and registers each chosen variant with
+64-bit `regsvr32 /s`.
 
 To register/unregister manually instead of using the installer, from an
-**elevated** prompt:
+**elevated** prompt (use the DLL(s) for the variant(s) you want):
 
 ```
-regsvr32 MinimalPinyinIME.dll        :: register
-regsvr32 /u MinimalPinyinIME.dll     :: unregister
+regsvr32 CantoIME-HK.dll        :: register Hong Kong SAR
+regsvr32 /u CantoIME-HK.dll     :: unregister Hong Kong SAR
 ```
 
 Use the 64-bit `regsvr32` (`C:\Windows\System32\regsvr32.exe`) for the 64-bit
-DLL.
+DLLs.
 
 ### 5. Enable / switch to the IME
 
-The profile registers under **Chinese (Traditional) — zh-TW (0x0404)**.
+Each variant registers under its matching locale: **Hong Kong SAR (0x0C04)**,
+**Taiwan (0x0404)**, or **Macao SAR (0x1404)** — all under Chinese (Traditional).
 
 1. Open **Settings > Time & language > Language & region**.
-2. If **Chinese (Traditional)** is not listed, click **Add a language** and add
-   it.
+2. If the **Chinese (Traditional)** locale you registered is not listed, click
+   **Add a language** and add it.
 3. Sign out and back in (or restart) so Windows picks up the newly registered
    text service.
 4. Switch input methods with **Win + Space** (or the language button on the
-   taskbar) until **"Minimal Pinyin IME (Sample)"** is selected.
+   taskbar) until the **"CantoIME (…)"** entry for your variant is selected.
 5. Type in any edit control (Notepad, WordPad, the search box) to see the
    composition + candidate window.
 
 ### 6. Customize the dictionary at runtime
 
 Edit the installed `dictionary.txt` (its path is the registry value
-`HKLM\Software\MinimalPinyinIME\DictionaryPath`, i.e.
-`C:\Program Files\MinimalPinyinIME\dictionary.txt`). The file is re-read the
+`HKLM\Software\CantoIME\DictionaryPath`, i.e.
+`C:\Program Files\CantoIME\dictionary.txt`). The file is re-read the
 next time the IME is activated, so re-select the IME (or sign out/in). You can
 also edit `dictionary.txt` in the repo before building/installing.
 
@@ -204,7 +226,7 @@ also edit `dictionary.txt` in the repo before building/installing.
 
 ## How it works
 
-- **TSF text service.** The DLL exposes a COM object (`CLSID_MinimalPinyinIME`)
+- **TSF text service.** The DLL exposes a COM object (`CLSID_CantoIME`)
   implementing `ITfTextInputProcessorEx`. Windows' `msctf` loads it into the
   focused application's process and calls `ActivateEx`, where we advise our
   keyboard and thread-manager sinks and load the dictionary.
@@ -247,7 +269,7 @@ also edit `dictionary.txt` in the repo before building/installing.
 
 Instead of Inno Setup you can package with **WiX Toolset**: author a `.wxs` that
 lays the DLL + `dictionary.txt` into a `ProgramFiles64Folder` component, writes
-the `HKLM\Software\MinimalPinyinIME\DictionaryPath` registry value, and runs the
+the `HKLM\Software\CantoIME\DictionaryPath` registry value, and runs the
 DLL's self-registration. WiX can self-register via a `SelfReg` reference or,
 better, by invoking 64-bit `regsvr32` from a deferred, elevated `CustomAction`
 sequenced on install/uninstall — mirroring the `[Run]`/`[UninstallRun]` steps in

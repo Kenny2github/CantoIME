@@ -1,10 +1,13 @@
 name: Build
 
-# Builds the TSF text service DLL on a Windows runner for every push and PR,
-# and publishes the compiled DLL (plus the sample dictionary) as an artifact.
+# Builds the TSF text service DLLs on a Windows runner and publishes them (plus
+# the sample dictionary) as an artifact.
+#
+# Triggered on push only. A push to a PR's head branch still surfaces this run
+# as a check on the PR, so a separate pull_request trigger would just double the
+# runs (and burn action minutes) for no added coverage.
 on:
   push:
-  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -24,8 +27,10 @@ jobs:
       - name: Upload DLL artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MinimalPinyinIME-x64
+          name: CantoIME-x64
           path: |
-            build/Release/MinimalPinyinIME.dll
+            build/Release/CantoIME-HK.dll
+            build/Release/CantoIME-TW.dll
+            build/Release/CantoIME-MO.dll
             build/Release/dictionary.txt
           if-no-files-found: error

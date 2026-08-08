@@ -6,7 +6,7 @@
 #include <windowsx.h>   // GET_X_LPARAM / GET_Y_LPARAM
 #include <string>
 
-const wchar_t* CandidateWindow::kClassName = L"MinimalPinyinIME_CandidateWnd";
+const wchar_t* CandidateWindow::kClassName = L"CantoIME_" CANTO_VARIANT_TAG L"_CandidateWnd";
 bool CandidateWindow::s_classRegistered = false;
 
 // Visual layout constants (device pixels; not DPI-aware for simplicity).
@@ -15,7 +15,7 @@ static const int    kPadY     = 6;   // vertical padding
 static const int    kLineH    = 24;  // height of each candidate row
 static const int    kFontSize = 18;  // font cell height
 static const int    kColGap   = 12;  // gap between columns in 2D mode
-static const size_t kPageSize = MPIME_MAX_CANDIDATES; // rows per column (9)
+static const size_t kPageSize = CANTO_MAX_CANDIDATES; // rows per column (9)
 
 CandidateWindow::~CandidateWindow()
 {
