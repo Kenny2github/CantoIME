@@ -228,6 +228,16 @@ void CandidateWindow::Hide()
     }
 }
 
+bool CandidateWindow::HitTestScreen(POINT pt) const
+{
+    if (!m_visible || !m_hWnd)
+        return false;
+    RECT rc;
+    if (!GetWindowRect(m_hWnd, &rc))
+        return false;
+    return PtInRect(&rc, pt) != FALSE;
+}
+
 void CandidateWindow::OnPaint(HWND hWnd)
 {
     PAINTSTRUCT ps;

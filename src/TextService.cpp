@@ -1002,16 +1002,20 @@ void CTextService::RemoveWheelHook()
 
 LRESULT CALLBACK CTextService::LowLevelMouseProc(int code, WPARAM wParam, LPARAM lParam)
 {
-    if (code == HC_ACTION && wParam == WM_MOUSEWHEEL &&
-        s_wheelOwner && s_wheelOwner->m_candWnd.IsVisible())
+    if (code == HC_ACTION && wParam == WM_MOUSEWHEEL && s_wheelOwner)
     {
         const MSLLHOOKSTRUCT* p = reinterpret_cast<const MSLLHOOKSTRUCT*>(lParam);
-        int delta = GET_WHEEL_DELTA_WPARAM(p->mouseData);
-        int ticks = delta / WHEEL_DELTA;
-        if (ticks == 0)
-            ticks = (delta > 0) ? 1 : -1;
-        s_wheelOwner->OnWheel(ticks);
-        return 1; // eat: the wheel drives candidate selection while shown
+        // Only steer candidate selection when the cursor is actually over the
+        // list. Anywhere else the wheel scrolls the app underneath as usual.
+        if (s_wheelOwner->m_candWnd.HitTestScreen(p->pt))
+        {
+            int delta = GET_WHEEL_DELTA_WPARAM(p->mouseData);
+            int ticks = delta / WHEEL_DELTA;
+            if (ticks == 0)
+                ticks = (delta > 0) ? 1 : -1;
+            s_wheelOwner->OnWheel(ticks);
+            return 1; // eat: the wheel drives candidate selection over the list
+        }
     }
     return CallNextHookEx(nullptr, code, wParam, lParam);
 }

@@ -29,7 +29,8 @@ methods.
 - **Arrow keys** move the selection. In the default vertical mode, pressing
   **Down** past the 9th candidate reveals the next page (selecting its 1st),
   and **Up** past the 1st reveals the previous page. **Mouse wheel** ticks act
-  as Up/Down.
+  as Up/Down while the cursor is over the candidate list; elsewhere the wheel
+  scrolls the underlying app as usual.
 - **PgDn / PgUp** move a whole page and reset the selection to the top of it.
 - **Right arrow** latches a two-dimensional layout for the rest of the
   composition: further 9-candidate pages appear as columns to the right, and

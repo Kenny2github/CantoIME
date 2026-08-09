@@ -51,6 +51,11 @@ public:
 
     bool IsVisible() const { return m_visible; }
 
+    // True when the window is visible and the screen point lies inside it.
+    // Lets the wheel hook capture ticks only while the cursor is over the
+    // list, passing scroll through to the app underneath otherwise.
+    bool HitTestScreen(POINT pt) const;
+
 private:
     static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
     void OnPaint(HWND hWnd);
