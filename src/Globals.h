@@ -60,12 +60,8 @@ extern const GUID GUID_Profile;
 // Icon index used when registering the profile (0 = default/no icon).
 #define TEXTSERVICE_ICON_INDEX 0
 
-// Registry root for our own settings (dictionary path override). Shared across
-// variants: they all read the same dictionary.
-#define CANTO_REG_SUBKEY    L"Software\\CantoIME"
-#define CANTO_REG_DICTVALUE L"DictionaryPath"
-
-// Default dictionary file name shipped next to the DLL.
+// Dictionary file name: the stock copy shipped next to the DLL and the
+// per-user override file at %APPDATA%\CantoIME\ share the same name.
 #define CANTO_DICT_FILENAME L"dictionary.txt"
 
 // Maximum candidates shown at once (number keys 1..9).
@@ -89,5 +85,9 @@ void DllRelease();
 // Returns the directory containing the loaded DLL (with trailing backslash).
 std::wstring GetModuleDirectory();
 
-// Returns the full resolved dictionary path using the documented search order.
-std::wstring ResolveDictionaryPath();
+// Path to the stock dictionary shipped next to the DLL (the base to load).
+std::wstring ResolveStockDictionaryPath();
+
+// Path to the per-user override file (%APPDATA%\CantoIME\dictionary.txt),
+// returned whether or not it exists.
+std::wstring ResolveOverridePath();

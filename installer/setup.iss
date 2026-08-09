@@ -6,8 +6,8 @@
 ;   * installs its DLL to {autopf}\CantoIME (64-bit),
 ;   * registers the TSF text service via 64-bit regsvr32 on install,
 ;   * unregisters it via regsvr32 /u on uninstall (before files are removed).
-; The shared dictionary and HKLM\Software\CantoIME\DictionaryPath are always
-; installed. "Chinese (Traditional, Hong Kong SAR)" is the default selection.
+; The shared stock dictionary is always installed next to the DLL; the IME reads
+; it directly (no registry). "Chinese (Traditional, Hong Kong SAR)" is default.
 ;
 ; Compile with:  iscc installer\setup.iss
 ; (Assumes the DLLs were already built to ..\build\Release\CantoIME-*.dll)
@@ -48,14 +48,9 @@ Name: "mo"; Description: "Chinese (Traditional, Macao SAR)"; \
 Source: "..\build\Release\CantoIME-HK.dll"; DestDir: "{app}"; Tasks: hk; Flags: ignoreversion 64bit
 Source: "..\build\Release\CantoIME-TW.dll"; DestDir: "{app}"; Tasks: tw; Flags: ignoreversion 64bit
 Source: "..\build\Release\CantoIME-MO.dll"; DestDir: "{app}"; Tasks: mo; Flags: ignoreversion 64bit
-; Shared, runtime-customizable dictionary (always installed).
+; Shared stock dictionary (always installed next to the DLL). Users customize
+; via %APPDATA%\CantoIME\dictionary.txt overrides, not by editing this file.
 Source: "..\dictionary.txt"; DestDir: "{app}"; Flags: ignoreversion
-
-[Registry]
-; Point every variant at the installed dictionary (shared key).
-Root: HKLM; Subkey: "Software\CantoIME"; ValueType: string; \
-    ValueName: "DictionaryPath"; ValueData: "{app}\dictionary.txt"; \
-    Flags: uninsdeletekey
 
 [Run]
 ; Register the selected variant's TSF text service via the 64-bit regsvr32.

@@ -6,6 +6,13 @@
 //     romanization<TAB or spaces>char1 char2 char3 ...
 // Lines beginning with '#' (after optional leading whitespace) are comments.
 // A UTF-8 BOM at the start of the file is tolerated.
+//
+// A second, optional file can override the stock dictionary after it loads
+// (see ApplyOverrides). Each of its lines starts with an operator:
+//     +key char1 char2 ...   prepend these characters to the key's entries
+//     =key char1 char2 ...   replace the key's entries entirely (no chars = remove)
+//     -key                   remove the key entirely
+// Whitespace between the operator and the key is optional.
 
 #pragma once
 
@@ -22,8 +29,15 @@ public:
     // Returns true if the file was opened and parsed (even if empty).
     bool Load(const std::wstring& path);
 
-    // Reloads from the last successfully loaded path. Returns false if we
-    // have never been given a path.
+    // Applies an override file on top of the currently loaded dictionary using
+    // the +/=/- line grammar documented at the top of this header. Missing keys
+    // referenced by '+' are created; missing files are a no-op. Returns true if
+    // the file was opened and parsed. The path is remembered so Reload() reapplies
+    // it. Call after Load().
+    bool ApplyOverrides(const std::wstring& path);
+
+    // Reloads from the last successfully loaded path, then reapplies the last
+    // override path if one was set. Returns false if we have never loaded.
     bool Reload();
 
     // Looks up an exact romanization key. Returns the candidate list, or an empty
@@ -50,7 +64,11 @@ public:
     const std::wstring& Path() const { return m_path; }
 
 private:
+    // Rebuilds m_sortedKeys and m_maxKeyLen from m_map. Call after any mutation.
+    void Rebuild();
+
     std::wstring m_path;
+    std::wstring m_overridePath;
     std::unordered_map<std::wstring, std::vector<std::wstring>> m_map;
     std::vector<std::wstring> m_sortedKeys; // all keys, sorted, for prefix scans
     size_t m_maxKeyLen = 0;                 // longest key length (for segmenter)

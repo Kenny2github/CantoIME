@@ -59,69 +59,23 @@ std::wstring GetModuleDirectory()
     return dir.substr(0, slash + 1);
 }
 
-// Reads a REG_SZ value from either HKCU or HKLM. Returns true on success.
-static bool ReadRegString(HKEY root, const wchar_t* subkey, const wchar_t* value, std::wstring& out)
+// The stock dictionary ships next to the DLL. This is always the base the
+// override file (if any) is layered on top of.
+std::wstring ResolveStockDictionaryPath()
 {
-    HKEY hKey = nullptr;
-    if (RegOpenKeyExW(root, subkey, 0, KEY_READ | KEY_WOW64_64KEY, &hKey) != ERROR_SUCCESS)
-        return false;
-
-    wchar_t buf[MAX_PATH] = { 0 };
-    DWORD cb = sizeof(buf);
-    DWORD type = 0;
-    LONG rc = RegQueryValueExW(hKey, value, nullptr, &type,
-                               reinterpret_cast<LPBYTE>(buf), &cb);
-    RegCloseKey(hKey);
-
-    if (rc != ERROR_SUCCESS || type != REG_SZ)
-        return false;
-
-    out.assign(buf);
-    return !out.empty();
-}
-
-static bool FileExists(const std::wstring& path)
-{
-    if (path.empty())
-        return false;
-    DWORD attr = GetFileAttributesW(path.c_str());
-    return (attr != INVALID_FILE_ATTRIBUTES) && !(attr & FILE_ATTRIBUTE_DIRECTORY);
-}
-
-std::wstring ResolveDictionaryPath()
-{
-    std::wstring path;
-
-    // (1) Registry override: prefer HKCU, then HKLM.
-    if (ReadRegString(HKEY_CURRENT_USER, CANTO_REG_SUBKEY, CANTO_REG_DICTVALUE, path) &&
-        FileExists(path))
-        return path;
-    if (ReadRegString(HKEY_LOCAL_MACHINE, CANTO_REG_SUBKEY, CANTO_REG_DICTVALUE, path) &&
-        FileExists(path))
-        return path;
-
-    // (2) dictionary.txt next to the DLL.
     std::wstring dir = GetModuleDirectory();
-    if (!dir.empty())
-    {
-        std::wstring candidate = dir + CANTO_DICT_FILENAME;
-        if (FileExists(candidate))
-            return candidate;
-    }
+    if (dir.empty())
+        return std::wstring();
+    return dir + CANTO_DICT_FILENAME;
+}
 
-    // (3) %APPDATA%\CantoIME\dictionary.txt
+// User overrides live at %APPDATA%\CantoIME\dictionary.txt. Returns the path
+// even if the file does not exist; the caller treats a missing file as "no
+// overrides".
+std::wstring ResolveOverridePath()
+{
     wchar_t appdata[MAX_PATH] = { 0 };
     if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, appdata)))
-    {
-        std::wstring candidate = std::wstring(appdata) + L"\\CantoIME\\" + CANTO_DICT_FILENAME;
-        if (FileExists(candidate))
-            return candidate;
-    }
-
-    // Nothing found: return the DLL-adjacent path as a best-effort default so
-    // the caller has a stable place to look. Dictionary load will simply yield
-    // no candidates if the file is missing.
-    if (!dir.empty())
-        return dir + CANTO_DICT_FILENAME;
+        return std::wstring(appdata) + L"\\CantoIME\\" + CANTO_DICT_FILENAME;
     return std::wstring();
 }

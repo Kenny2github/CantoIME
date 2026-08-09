@@ -36,11 +36,10 @@ static bool IsSpace(wchar_t c)
     return c == L' ' || c == L'\t' || c == L'\r' || c == L'\n';
 }
 
-bool Dictionary::Load(const std::wstring& path)
+// Reads a UTF-8 file into a wide string, skipping a leading BOM. Returns false
+// if the file cannot be opened, is empty, or is implausibly large.
+static bool ReadFileToWide(const std::wstring& path, std::wstring& out)
 {
-    m_path = path;
-    m_map.clear();
-
     HANDLE hFile = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ,
                                nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (hFile == INVALID_HANDLE_VALUE)
@@ -61,7 +60,6 @@ bool Dictionary::Load(const std::wstring& path)
     if (!ok)
         return false;
 
-    // Skip a UTF-8 BOM if present.
     const char* start = bytes.data();
     int count = static_cast<int>(read);
     if (count >= 3 && (unsigned char)start[0] == 0xEF &&
@@ -71,9 +69,59 @@ bool Dictionary::Load(const std::wstring& path)
         count -= 3;
     }
 
-    std::wstring text = Utf8ToWide(start, count);
+    out = Utf8ToWide(start, count);
+    return true;
+}
 
-    // Parse line by line.
+// Drops repeated tokens, preserving first-seen order. Several dictionary lines
+// list their whole candidate set twice, which would otherwise surface every
+// character as a duplicate candidate.
+static void DedupPreserveOrder(std::vector<std::wstring>& v)
+{
+    if (v.size() <= 1)
+        return;
+    std::unordered_set<std::wstring> seen;
+    std::vector<std::wstring> unique;
+    unique.reserve(v.size());
+    for (auto& c : v)
+        if (seen.insert(c).second)
+            unique.push_back(std::move(c));
+    v = std::move(unique);
+}
+
+// Splits "key char char ..." starting at `s` into a lowercased key and its
+// whitespace-separated candidate tokens. Returns false if there is no key.
+// Does not dedup (the caller decides, since prepend dedups across two lists).
+static bool SplitEntry(const std::wstring& line, size_t s,
+                       std::wstring& key, std::vector<std::wstring>& cands)
+{
+    while (s < line.size() && IsSpace(line[s]))
+        ++s;
+    size_t keyStart = s;
+    while (s < line.size() && !IsSpace(line[s]))
+        ++s;
+    key = ToLower(line.substr(keyStart, s - keyStart));
+    if (key.empty())
+        return false;
+
+    cands.clear();
+    while (s < line.size())
+    {
+        while (s < line.size() && IsSpace(line[s]))
+            ++s;
+        size_t tokStart = s;
+        while (s < line.size() && !IsSpace(line[s]))
+            ++s;
+        if (s > tokStart)
+            cands.push_back(line.substr(tokStart, s - tokStart));
+    }
+    return true;
+}
+
+// Calls fn(line, firstNonSpace) for each non-blank, non-comment line of text.
+template <typename Fn>
+static void ForEachEntryLine(const std::wstring& text, Fn fn)
+{
     size_t pos = 0;
     while (pos < text.size())
     {
@@ -83,74 +131,125 @@ bool Dictionary::Load(const std::wstring& path)
                                 : text.substr(pos, eol - pos);
         pos = (eol == std::wstring::npos) ? text.size() : eol + 1;
 
-        // Trim leading whitespace.
         size_t s = 0;
         while (s < line.size() && IsSpace(line[s]))
             ++s;
-        if (s >= line.size())
+        if (s >= line.size() || line[s] == L'#')
             continue;
-        if (line[s] == L'#')
-            continue; // comment
+        fn(line, s);
+    }
+}
 
-        // Read the romanization key (up to first whitespace run).
-        size_t keyStart = s;
-        while (s < line.size() && !IsSpace(line[s]))
-            ++s;
-        std::wstring key = ToLower(line.substr(keyStart, s - keyStart));
-        if (key.empty())
-            continue;
+bool Dictionary::Load(const std::wstring& path)
+{
+    m_path = path;
+    m_overridePath.clear();
+    m_map.clear();
 
-        // Read the remaining tokens as candidates (whitespace-separated).
-        std::vector<std::wstring> cands;
-        while (s < line.size())
-        {
-            while (s < line.size() && IsSpace(line[s]))
-                ++s;
-            size_t tokStart = s;
-            while (s < line.size() && !IsSpace(line[s]))
-                ++s;
-            if (s > tokStart)
-                cands.push_back(line.substr(tokStart, s - tokStart));
-        }
-
-        // Drop repeated characters within a key, preserving first-seen order.
-        // Several dictionary lines list their whole candidate set twice, which
-        // would otherwise surface every character as a duplicate candidate.
-        if (cands.size() > 1)
-        {
-            std::unordered_set<std::wstring> seen;
-            std::vector<std::wstring> unique;
-            unique.reserve(cands.size());
-            for (auto& c : cands)
-                if (seen.insert(c).second)
-                    unique.push_back(std::move(c));
-            cands = std::move(unique);
-        }
-
-        if (!cands.empty())
-        {
-            if (key.size() > m_maxKeyLen)
-                m_maxKeyLen = key.size();
-            m_map[key] = std::move(cands); // later duplicate keys override earlier
-        }
+    std::wstring text;
+    if (!ReadFileToWide(path, text))
+    {
+        Rebuild();
+        return false;
     }
 
-    // Build the sorted key list used for prefix scans. Done once per load so
-    // KeysWithPrefix can binary-search instead of scanning the whole map.
+    ForEachEntryLine(text, [this](const std::wstring& line, size_t s)
+    {
+        std::wstring key;
+        std::vector<std::wstring> cands;
+        if (!SplitEntry(line, s, key, cands))
+            return;
+        DedupPreserveOrder(cands);
+        if (!cands.empty())
+            m_map[key] = std::move(cands); // later duplicate keys override earlier
+    });
+
+    Rebuild();
+    return true;
+}
+
+bool Dictionary::ApplyOverrides(const std::wstring& path)
+{
+    m_overridePath = path;
+
+    std::wstring text;
+    if (!ReadFileToWide(path, text))
+        return false;
+
+    ForEachEntryLine(text, [this](const std::wstring& line, size_t s)
+    {
+        wchar_t op = line[s];
+        if (op != L'+' && op != L'=' && op != L'-')
+            return; // override lines must carry an operator; ignore anything else
+
+        std::wstring key;
+        std::vector<std::wstring> cands;
+        // The operator is one char; parse the remainder as a normal entry.
+        // '-' takes only a key, but SplitEntry harmlessly ignores extra tokens.
+        if (!SplitEntry(line, s + 1, key, cands))
+            return;
+
+        if (op == L'-')
+        {
+            m_map.erase(key);
+            return;
+        }
+
+        DedupPreserveOrder(cands);
+
+        if (op == L'=')
+        {
+            if (cands.empty())
+                m_map.erase(key); // '=' with no entries removes, same as '-'
+            else
+                m_map[key] = std::move(cands);
+            return;
+        }
+
+        // op == '+': prepend the new characters ahead of any existing ones.
+        auto it = m_map.find(key);
+        if (it == m_map.end())
+        {
+            if (!cands.empty())
+                m_map[key] = std::move(cands);
+        }
+        else
+        {
+            cands.insert(cands.end(), it->second.begin(), it->second.end());
+            DedupPreserveOrder(cands);
+            it->second = std::move(cands);
+        }
+    });
+
+    Rebuild();
+    return true;
+}
+
+void Dictionary::Rebuild()
+{
+    // Rebuild the sorted key list (KeysWithPrefix binary-searches it) and the
+    // longest-key length (used by the segmenter) from the current map.
+    m_maxKeyLen = 0;
     m_sortedKeys.clear();
     m_sortedKeys.reserve(m_map.size());
     for (const auto& kv : m_map)
+    {
         m_sortedKeys.push_back(kv.first);
+        if (kv.first.size() > m_maxKeyLen)
+            m_maxKeyLen = kv.first.size();
+    }
     std::sort(m_sortedKeys.begin(), m_sortedKeys.end());
-
-    return true;
 }
 
 bool Dictionary::Reload()
 {
     if (m_path.empty())
         return false;
-    return Load(m_path);
+    std::wstring overridePath = m_overridePath;
+    bool ok = Load(m_path); // clears m_overridePath
+    if (!overridePath.empty())
+        ApplyOverrides(overridePath);
+    return ok;
 }
 
 const std::vector<std::wstring>& Dictionary::Lookup(const std::wstring& romanization) const

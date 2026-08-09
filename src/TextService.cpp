@@ -143,8 +143,10 @@ STDMETHODIMP CTextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD 
     if (!InitKeyEventSink())
         goto fail;
 
-    // Load the dictionary at activation using the documented search order.
-    m_dict.Load(ResolveDictionaryPath());
+    // Load the stock dictionary shipped next to the DLL, then layer the
+    // per-user override file (%APPDATA%\CantoIME\dictionary.txt) on top.
+    m_dict.Load(ResolveStockDictionaryPath());
+    m_dict.ApplyOverrides(ResolveOverridePath());
 
     // Prepare (but do not show) the candidate window, and route candidate
     // clicks back to us so a mouse click accepts that candidate.

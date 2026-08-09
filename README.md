@@ -72,22 +72,33 @@ prefix-only match shows its leftover romanization after the character (e.g. with
 `gao` → 高, typing `ga` displays `高o`). Any leading syllables in a multi-syllable
 buffer must be **exact** keys; only the last syllable is prefix-matched.
 
-### Dictionary search order (documented)
+### Stock dictionary + per-user overrides
 
-The DLL resolves the dictionary path at activation time, in this order:
+At activation the DLL loads the **stock `dictionary.txt` next to the DLL**, then
+layers a per-user override file on top if it exists. The registry is not used.
 
-1. **Registry override** — REG_SZ value
-   `Software\CantoIME\DictionaryPath`, checked first under **HKCU**,
-   then **HKLM**. (The installer writes the HKLM value.)
-2. **`dictionary.txt` next to the DLL.**
-3. **`%APPDATA%\CantoIME\dictionary.txt`.**
+The override file is **`%APPDATA%\CantoIME\dictionary.txt`**. Every line starts
+with an operator that says what to do to one stock key (whitespace between the
+operator and the key is optional):
 
-The first existing file wins. If none exist, no candidates are produced (typing
-still works; Enter commits the raw romanization).
+```
++key char1 char2 ...   prepend these characters ahead of the key's stock entries
+=key char1 char2 ...   replace the key's entries entirely
+-key                   remove the key entirely
+```
 
-To customize at runtime: edit the file the registry points at (or drop your own
-`dictionary.txt` next to the DLL), then re-select the IME (or sign out/in) so it
-reloads on the next activation.
+`=key` with no characters removes the key too (same as `-key`). A `+` on a key
+the stock file never defined simply creates it. Lines beginning with `#` are
+comments; lines without a leading operator are ignored. Prepends and replacements
+still de-duplicate characters, so a prepended character that already existed just
+moves to the front.
+
+If the override file is absent, only the stock dictionary is used. If neither
+exists, no candidates are produced (typing still works; Enter commits the raw
+romanization).
+
+To customize at runtime: create/edit `%APPDATA%\CantoIME\dictionary.txt`, then
+re-select the IME (or sign out/in) so it reloads on the next activation.
 
 ---
 
@@ -178,9 +189,9 @@ default.
 ### 4. Install (as administrator)
 
 Run `CantoIME-Setup.exe`. Choose which variant to install, then it installs that
-DLL + the shared dictionary to `C:\Program Files\CantoIME\`, writes the registry
-`DictionaryPath` value, and registers the chosen variant with
-64-bit `regsvr32 /s`.
+DLL + the stock dictionary to `C:\Program Files\CantoIME\` and registers the
+chosen variant with 64-bit `regsvr32 /s`. No registry values are written beyond
+the COM registration `regsvr32` performs.
 
 To register/unregister manually instead of using the installer, from an
 **elevated** prompt (use the DLL(s) for the variant(s) you want):
@@ -220,11 +231,12 @@ cleanly.
 
 ### 6. Customize the dictionary at runtime
 
-Edit the installed `dictionary.txt` (its path is the registry value
-`HKLM\Software\CantoIME\DictionaryPath`, i.e.
-`C:\Program Files\CantoIME\dictionary.txt`). The file is re-read the
-next time the IME is activated, so re-select the IME (or sign out/in). You can
-also edit `dictionary.txt` in the repo before building/installing.
+Create or edit **`%APPDATA%\CantoIME\dictionary.txt`** to override the stock
+dictionary with the `+`/`=`/`-` grammar described under
+[Stock dictionary + per-user overrides](#stock-dictionary--per-user-overrides).
+The overrides are re-read the next time the IME is activated, so re-select the
+IME (or sign out/in). To change the shipped baseline instead, edit
+`dictionary.txt` in the repo before building/installing.
 
 ---
 
@@ -272,9 +284,8 @@ also edit `dictionary.txt` in the repo before building/installing.
 ## Installer note: WiX alternative
 
 Instead of Inno Setup you can package with **WiX Toolset**: author a `.wxs` that
-lays the DLL + `dictionary.txt` into a `ProgramFiles64Folder` component, writes
-the `HKLM\Software\CantoIME\DictionaryPath` registry value, and runs the
-DLL's self-registration. WiX can self-register via a `SelfReg` reference or,
+lays the DLL + `dictionary.txt` into a `ProgramFiles64Folder` component and runs
+the DLL's self-registration. WiX can self-register via a `SelfReg` reference or,
 better, by invoking 64-bit `regsvr32` from a deferred, elevated `CustomAction`
 sequenced on install/uninstall — mirroring the `[Run]`/`[UninstallRun]` steps in
 `installer/setup.iss`. WiX gives you an MSI (better for enterprise deployment)
