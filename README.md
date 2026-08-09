@@ -23,10 +23,21 @@ methods.
   as an underlined TSF composition inside the target app.
 - On each keystroke the buffer is looked up in the dictionary and matching
   candidate characters appear in a small **owner-drawn popup** near the caret,
-  listed as `1 拼  2 品  3 聘 …` (up to 9).
-- **Number keys `1`–`9`** select the corresponding candidate and commit it.
-- **Space** selects the first candidate (commits raw buffer if there are none).
-- **Enter** commits the raw typed pinyin text as-is.
+  listed as `1 拼  2 品  3 聘 …` (9 per page). The first candidate is selected by
+  default (highlighted).
+- **Click** a candidate to accept it.
+- **Arrow keys** move the selection. In the default vertical mode, pressing
+  **Down** past the 9th candidate reveals the next page (selecting its 1st),
+  and **Up** past the 1st reveals the previous page. **Mouse wheel** ticks act
+  as Up/Down.
+- **PgDn / PgUp** move a whole page and reset the selection to the top of it.
+- **Right arrow** latches a two-dimensional layout for the rest of the
+  composition: further 9-candidate pages appear as columns to the right, and
+  **Left / Right** move between them.
+- **Number keys `1`–`9`** accept the candidate in that row of the currently
+  selected page (column).
+- **Space** or **Enter** accepts the currently selected candidate (commits the
+  raw buffer if there are no candidates).
 - **Backspace** deletes the last letter (updates composition + candidates); if
   the buffer empties, the composition is cancelled. If not composing, it passes
   through.
@@ -223,7 +234,6 @@ also edit `dictionary.txt` in the repo before building/installing.
 - **Greedy segmentation.** Leading syllables are locked to their single best
   character using a longest-exact-match scan; there is no per-syllable candidate
   choice for the locked portion and no re-segmentation backtracking.
-- **Candidate paging is limited to the first 9** matches; no page up/down.
 - **Not DPI-aware**; the popup uses fixed pixel metrics.
 - The caret-position fallback (`GetCaretPos` -> `ClientToScreen` on the
   foreground window) is heuristic and may be imprecise in some apps.
