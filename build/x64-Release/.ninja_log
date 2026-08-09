@@ -1,8 +1,0 @@
-# ninja log v6
-22	857	8078466177593786	CMakeFiles/MinimalPinyinIME.dir/src/CandidateWindow.cpp.obj	ef76bb7e79c40d62
-36	946	8078466177749488	CMakeFiles/MinimalPinyinIME.dir/src/dllmain.cpp.obj	e1c9d417b4ca6ba0
-15	1057	8078466177537300	CMakeFiles/MinimalPinyinIME.dir/src/Dictionary.cpp.obj	3feeb2d323e8babf
-8	1084	8078466177458231	CMakeFiles/MinimalPinyinIME.dir/src/Globals.cpp.obj	726b46b722d3ee62
-29	1092	8078466177672321	CMakeFiles/MinimalPinyinIME.dir/src/TextService.cpp.obj	ff13d935a49264f1
-1093	1772	8078466193857397	MinimalPinyinIME.dll	351709b89d4d6429
-1093	1772	8078466193857397	MinimalPinyinIME.lib	351709b89d4d6429
