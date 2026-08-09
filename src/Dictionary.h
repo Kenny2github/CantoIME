@@ -31,6 +31,19 @@ public:
     // (keys are stored lowercased).
     const std::vector<std::wstring>& Lookup(const std::wstring& pinyin) const;
 
+    // True if the exact key exists.
+    bool HasExact(const std::wstring& pinyin) const;
+
+    // Returns keys (in sorted order) that begin with the given prefix, up to
+    // maxKeys results. An empty prefix returns nothing. Case-insensitive.
+    std::vector<std::wstring> KeysWithPrefix(const std::wstring& prefix,
+                                             size_t maxKeys) const;
+
+    // Length of the longest exact key that is a prefix of s starting at
+    // position `start`, or 0 if none. Used by the phrase segmenter to lock
+    // complete leading syllables before prefix-matching the final one.
+    size_t LongestExactPrefixLen(const std::wstring& s, size_t start) const;
+
     // True if at least one entry is loaded.
     bool IsLoaded() const { return !m_map.empty(); }
 
@@ -39,5 +52,7 @@ public:
 private:
     std::wstring m_path;
     std::unordered_map<std::wstring, std::vector<std::wstring>> m_map;
-    std::vector<std::wstring> m_empty; // returned by Lookup on miss
+    std::vector<std::wstring> m_sortedKeys; // all keys, sorted, for prefix scans
+    size_t m_maxKeyLen = 0;                 // longest key length (for segmenter)
+    std::vector<std::wstring> m_empty;      // returned by Lookup on miss
 };
