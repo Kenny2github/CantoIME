@@ -1,0 +1,43 @@
+// Dictionary.h
+//
+// Runtime pinyin -> character dictionary.
+//
+// The dictionary is a plain UTF-8 text file. Each line is:
+//     pinyin<TAB or spaces>char1 char2 char3 ...
+// Lines beginning with '#' (after optional leading whitespace) are comments.
+// A UTF-8 BOM at the start of the file is tolerated.
+
+#pragma once
+
+#include <string>
+#include <vector>
+#include <unordered_map>
+
+class Dictionary
+{
+public:
+    Dictionary() = default;
+
+    // Loads (or reloads) the dictionary from the given UTF-8 file.
+    // Returns true if the file was opened and parsed (even if empty).
+    bool Load(const std::wstring& path);
+
+    // Reloads from the last successfully loaded path. Returns false if we
+    // have never been given a path.
+    bool Reload();
+
+    // Looks up an exact pinyin key. Returns the candidate list, or an empty
+    // vector if the key is not present. The comparison is case-insensitive
+    // (keys are stored lowercased).
+    const std::vector<std::wstring>& Lookup(const std::wstring& pinyin) const;
+
+    // True if at least one entry is loaded.
+    bool IsLoaded() const { return !m_map.empty(); }
+
+    const std::wstring& Path() const { return m_path; }
+
+private:
+    std::wstring m_path;
+    std::unordered_map<std::wstring, std::vector<std::wstring>> m_map;
+    std::vector<std::wstring> m_empty; // returned by Lookup on miss
+};
