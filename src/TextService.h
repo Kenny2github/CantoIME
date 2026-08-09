@@ -106,7 +106,7 @@ private:
     // right arrow is pressed the view latches into 2D mode for the rest of the
     // composition: further pages appear as columns to the right and left/right
     // move between them.
-    static const size_t kPageSize = MPIME_MAX_CANDIDATES; // 9
+    static const size_t kPageSize = CANTO_MAX_CANDIDATES; // 9
     static const size_t kMaxCols  = 5;                    // max width in 2D mode
 
     size_t ColsShown() const;      // columns currently displayed from m_pageBase
