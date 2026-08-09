@@ -31,24 +31,22 @@ ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
 WizardStyle=modern
 
-[Types]
-; "Default" installs only Hong Kong SAR. "Full" installs all three. "Custom"
-; lets the user tick any combination.
-Name: "default"; Description: "Default (Hong Kong SAR only)"
-Name: "full"; Description: "All Traditional Chinese variants"
-Name: "custom"; Description: "Custom"; Flags: iscustom
-
-[Components]
-; Hong Kong SAR is in the "default" type, so it is the sole default selection.
-Name: "hk"; Description: "Chinese (Traditional, Hong Kong SAR)"; Types: default full custom
-Name: "tw"; Description: "Chinese (Traditional, Taiwan)"; Types: full
-Name: "mo"; Description: "Chinese (Traditional, Macao SAR)"; Types: full
+[Tasks]
+; The three variants share one dictionary, so only one may be installed at a
+; time. The "exclusive" flag makes these a radio group; Hong Kong SAR is
+; checked by default, the others are unchecked.
+Name: "hk"; Description: "Chinese (Traditional, Hong Kong SAR)"; \
+    GroupDescription: "Install CantoIME for which Traditional Chinese variant:"; Flags: exclusive
+Name: "tw"; Description: "Chinese (Traditional, Taiwan)"; \
+    GroupDescription: "Install CantoIME for which Traditional Chinese variant:"; Flags: exclusive unchecked
+Name: "mo"; Description: "Chinese (Traditional, Macao SAR)"; \
+    GroupDescription: "Install CantoIME for which Traditional Chinese variant:"; Flags: exclusive unchecked
 
 [Files]
-; One DLL per selected variant.
-Source: "..\build\Release\CantoIME-HK.dll"; DestDir: "{app}"; Components: hk; Flags: ignoreversion 64bit
-Source: "..\build\Release\CantoIME-TW.dll"; DestDir: "{app}"; Components: tw; Flags: ignoreversion 64bit
-Source: "..\build\Release\CantoIME-MO.dll"; DestDir: "{app}"; Components: mo; Flags: ignoreversion 64bit
+; The DLL for the selected variant (only one task can be active).
+Source: "..\build\Release\CantoIME-HK.dll"; DestDir: "{app}"; Tasks: hk; Flags: ignoreversion 64bit
+Source: "..\build\Release\CantoIME-TW.dll"; DestDir: "{app}"; Tasks: tw; Flags: ignoreversion 64bit
+Source: "..\build\Release\CantoIME-MO.dll"; DestDir: "{app}"; Tasks: mo; Flags: ignoreversion 64bit
 ; Shared, runtime-customizable dictionary (always installed).
 Source: "..\dictionary.txt"; DestDir: "{app}"; Flags: ignoreversion
 
@@ -59,24 +57,24 @@ Root: HKLM; Subkey: "Software\CantoIME"; ValueType: string; \
     Flags: uninsdeletekey
 
 [Run]
-; Register each selected variant's TSF text service via the 64-bit regsvr32.
+; Register the selected variant's TSF text service via the 64-bit regsvr32.
 Filename: "{sys}\regsvr32.exe"; Parameters: "/s ""{app}\CantoIME-HK.dll"""; \
-    Components: hk; StatusMsg: "Registering Hong Kong SAR input method..."; \
+    Tasks: hk; StatusMsg: "Registering Hong Kong SAR input method..."; \
     Flags: runhidden waituntilterminated
 Filename: "{sys}\regsvr32.exe"; Parameters: "/s ""{app}\CantoIME-TW.dll"""; \
-    Components: tw; StatusMsg: "Registering Taiwan input method..."; \
+    Tasks: tw; StatusMsg: "Registering Taiwan input method..."; \
     Flags: runhidden waituntilterminated
 Filename: "{sys}\regsvr32.exe"; Parameters: "/s ""{app}\CantoIME-MO.dll"""; \
-    Components: mo; StatusMsg: "Registering Macao SAR input method..."; \
+    Tasks: mo; StatusMsg: "Registering Macao SAR input method..."; \
     Flags: runhidden waituntilterminated
 
 [UninstallRun]
 ; Unregister BEFORE files are removed. [UninstallRun] entries execute before
-; files are deleted, so each DLL still exists at unregistration time. The
-; Components filter means only variants that were installed get unregistered.
+; files are deleted, so the DLL still exists at unregistration time. The Tasks
+; filter means only the variant that was installed gets unregistered.
 Filename: "{sys}\regsvr32.exe"; Parameters: "/u /s ""{app}\CantoIME-HK.dll"""; \
-    Components: hk; Flags: runhidden waituntilterminated; RunOnceId: "UnregIME_HK"
+    Tasks: hk; Flags: runhidden waituntilterminated; RunOnceId: "UnregIME_HK"
 Filename: "{sys}\regsvr32.exe"; Parameters: "/u /s ""{app}\CantoIME-TW.dll"""; \
-    Components: tw; Flags: runhidden waituntilterminated; RunOnceId: "UnregIME_TW"
+    Tasks: tw; Flags: runhidden waituntilterminated; RunOnceId: "UnregIME_TW"
 Filename: "{sys}\regsvr32.exe"; Parameters: "/u /s ""{app}\CantoIME-MO.dll"""; \
-    Components: mo; Flags: runhidden waituntilterminated; RunOnceId: "UnregIME_MO"
+    Tasks: mo; Flags: runhidden waituntilterminated; RunOnceId: "UnregIME_MO"
