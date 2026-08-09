@@ -1,8 +1,8 @@
-# Minimal Pinyin IME - sample dictionary
+# CantoIME - sample dictionary
 #
-# Format: pinyin<TAB or spaces>char1 char2 char3 ...
+# Format: romanization<TAB or spaces>char1 char2 char3 ...
 # Lines starting with '#' are comments. Candidates are space-separated.
-# The pinyin key is matched exactly (case-insensitive). No tone marks.
+# The romanization key is matched exactly (case-insensitive). No tone marks.
 #
 # Edit this file at runtime to customize candidates. See README for the
 # search order used to locate this file.

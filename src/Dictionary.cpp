@@ -92,7 +92,7 @@ bool Dictionary::Load(const std::wstring& path)
         if (line[s] == L'#')
             continue; // comment
 
-        // Read the pinyin key (up to first whitespace run).
+        // Read the romanization key (up to first whitespace run).
         size_t keyStart = s;
         while (s < line.size() && !IsSpace(line[s]))
             ++s;
@@ -153,18 +153,18 @@ bool Dictionary::Reload()
     return Load(m_path);
 }
 
-const std::vector<std::wstring>& Dictionary::Lookup(const std::wstring& pinyin) const
+const std::vector<std::wstring>& Dictionary::Lookup(const std::wstring& romanization) const
 {
-    std::wstring key = ToLower(pinyin);
+    std::wstring key = ToLower(romanization);
     auto it = m_map.find(key);
     if (it == m_map.end())
         return m_empty;
     return it->second;
 }
 
-bool Dictionary::HasExact(const std::wstring& pinyin) const
+bool Dictionary::HasExact(const std::wstring& romanization) const
 {
-    return m_map.find(ToLower(pinyin)) != m_map.end();
+    return m_map.find(ToLower(romanization)) != m_map.end();
 }
 
 std::vector<std::wstring> Dictionary::KeysWithPrefix(const std::wstring& prefix,
