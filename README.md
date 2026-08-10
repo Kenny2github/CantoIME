@@ -111,22 +111,23 @@ DLL; no `%APPDATA%` and no registry path search are used.
 
 Open **Settings → Time & language → Language & region → (your Chinese variant) →
 Keyboards → CantoIME → ⋯ → Keyboard options**. The dialog (the IME's own window)
-edits two per-user settings, stored in `HKCU\Software\CantoIME`:
+edits three per-user settings, stored in `HKCU\Software\CantoIME`:
 
 - **Dictionary** — a dropdown that is the *sole* selector for which dictionary is
   read: *Stock Traditional Chinese dictionary* (`traditional.txt`), *Stock
   Simplified Chinese dictionary* (`simplified.txt`), or *Custom* (Browse for your
   own file). The default follows the variant's script: Traditional (HK/TW/MO)
   defaults to `traditional.txt`, Simplified (CN/SG) to `simplified.txt`.
+- **Chinese/English toggle key** — which shift key, tapped on its own, switches
+  between Chinese input and English passthrough: Both shifts (default), Left
+  Shift, Right Shift, or Neither (disables the shift toggle; the 中/英 language-bar
+  button still works). Holding shift for capitals is unaffected.
 - **Candidate font size** — the candidate window font height; the window width
   grows with it. Default 18 px.
 
 Changes apply the next time CantoIME gains focus (re-select it or click into a
-text box). If the selected file is missing, no candidates are produced (typing
-still works; Enter commits the raw romanization).
-
-(The Chinese/English mode toggle is a separate, always-on feature: a lone Shift
-tap or the 中/英 language-bar button, documented above.)
+text box). If the selected dictionary file is missing, no candidates are produced
+(typing still works; Enter commits the raw romanization).
 
 ---
 

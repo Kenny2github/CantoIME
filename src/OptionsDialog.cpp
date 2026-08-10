@@ -78,6 +78,27 @@ static LRESULT ComboData(HWND hCombo)
     return SendMessageW(hCombo, CB_GETITEMDATA, i, 0);
 }
 
+// Toggle-key dropdown. Item data holds the ToggleKeyMode value.
+struct ToggleChoice { const wchar_t* label; ToggleKeyMode mode; };
+static const ToggleChoice kToggleChoices[] = {
+    { L"Both shifts (default)", ToggleKeyMode::Both },
+    { L"Left Shift",            ToggleKeyMode::LeftShift },
+    { L"Right Shift",           ToggleKeyMode::RightShift },
+    { L"Neither",               ToggleKeyMode::Neither },
+};
+
+static void FillToggleCombo(HWND hCombo, ToggleKeyMode current)
+{
+    for (const ToggleChoice& c : kToggleChoices)
+    {
+        int i = static_cast<int>(SendMessageW(hCombo, CB_ADDSTRING, 0,
+                                              reinterpret_cast<LPARAM>(c.label)));
+        SendMessageW(hCombo, CB_SETITEMDATA, i, static_cast<LPARAM>(c.mode));
+        if (c.mode == current)
+            SendMessageW(hCombo, CB_SETCURSEL, i, 0);
+    }
+}
+
 static void OnBrowse(HWND hDlg)
 {
     wchar_t path[MAX_PATH] = { 0 };
@@ -109,6 +130,7 @@ static INT_PTR CALLBACK DlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM /*lPa
         SetDlgItemTextW(hDlg, IDC_DICT_PATH, s.dictionaryPath.c_str());
         UpdateDictControls(hDlg);
 
+        FillToggleCombo(GetDlgItem(hDlg, IDC_TOGGLE), s.toggleKey);
         FillFontCombo(GetDlgItem(hDlg, IDC_FONTSIZE), s.fontSize);
         return TRUE;
     }
@@ -139,6 +161,10 @@ static INT_PTR CALLBACK DlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM /*lPa
                 GetDlgItemTextW(hDlg, IDC_DICT_PATH, path, MAX_PATH);
                 s.dictionaryPath = path;
             }
+
+            LRESULT toggle = ComboData(GetDlgItem(hDlg, IDC_TOGGLE));
+            if (toggle >= 0)
+                s.toggleKey = static_cast<ToggleKeyMode>(toggle);
 
             LRESULT font = ComboData(GetDlgItem(hDlg, IDC_FONTSIZE));
             if (font > 0)

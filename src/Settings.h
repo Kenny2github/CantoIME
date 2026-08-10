@@ -7,6 +7,15 @@
 
 #include <string>
 
+// Which key, tapped on its own, toggles Chinese <-> English input mode.
+enum class ToggleKeyMode
+{
+    Neither    = 0,
+    LeftShift  = 1,
+    RightShift = 2,
+    Both       = 3, // either shift (default)
+};
+
 // Which dictionary to read. This is the sole mechanism that selects the
 // dictionary (see ResolveDictionaryPath). When unset, LoadSettings defaults to
 // the variant's script (Traditional for HK/TW/MO, Simplified for CN/SG).
@@ -27,6 +36,9 @@ struct CantoSettings
 
     // Candidate window font cell height, in pixels. Default CANTO_DEFAULT_FONT_SIZE.
     int           fontSize = 0; // 0 -> filled with the default by LoadSettings
+
+    // Which shift key, tapped alone, toggles Chinese/English. Default: either.
+    ToggleKeyMode toggleKey = ToggleKeyMode::Both;
 };
 
 // Reads settings from HKCU, substituting defaults for any missing value.

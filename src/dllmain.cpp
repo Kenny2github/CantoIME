@@ -187,46 +187,64 @@ static void UnregisterInprocServer()
     RegDeleteKeyW(HKEY_CLASSES_ROOT, base.c_str());
 }
 
-// Registers the TSF profile (language profile) for our text service.
+// Registers the TSF text service + its language profile.
+//
+// We use the modern ITfInputProcessorProfileMgr::RegisterProfile (Vista+), NOT
+// the legacy ITfInputProcessorProfiles::Register + AddLanguageProfile. Three
+// things depend on this on Windows 10/11:
+//   * "Keyboard options" appears (Settings invokes our ITfFnConfigure only for a
+//     service registered this way);
+//   * the profile is bound to TEXTSERVICE_LANGID (no phantom entry under the
+//     current input language);
+//   * bEnabledByDefault = FALSE means the IME is NOT auto-added to the input
+//     list. It shows under "Add a keyboard" for the language and obeys the
+//     installed-keyboards list (add/remove sticks) instead of clinging to the
+//     Win+Space menu. dwFlags = 0 so it is visible in the settings UI.
+// The icon is index 0 = the DLL's icon resource (our 粵 glyph, a generated .res).
 static HRESULT RegisterProfile()
 {
-    ITfInputProcessorProfiles* pProfiles = nullptr;
+    ITfInputProcessorProfileMgr* pMgr = nullptr;
     HRESULT hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
-                                  CLSCTX_INPROC_SERVER, IID_ITfInputProcessorProfiles,
-                                  reinterpret_cast<void**>(&pProfiles));
+                                  CLSCTX_INPROC_SERVER, IID_ITfInputProcessorProfileMgr,
+                                  reinterpret_cast<void**>(&pMgr));
     if (FAILED(hr))
         return hr;
 
-    hr = pProfiles->Register(CLSID_CantoIME);
-    if (SUCCEEDED(hr))
+    wchar_t module[MAX_PATH] = { 0 };
+    DWORD n = GetModuleFileNameW(g_hInst, module, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH)
     {
-        wchar_t module[MAX_PATH] = { 0 };
-        GetModuleFileNameW(g_hInst, module, MAX_PATH);
-
-        hr = pProfiles->AddLanguageProfile(
-            CLSID_CantoIME,
-            TEXTSERVICE_LANGID,
-            GUID_Profile,
-            TEXTSERVICE_DESC,
-            static_cast<ULONG>(wcslen(TEXTSERVICE_DESC)),
-            module,                        // icon file (the DLL)
-            static_cast<ULONG>(wcslen(module)),
-            TEXTSERVICE_ICON_INDEX);
+        pMgr->Release();
+        return HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
     }
 
-    pProfiles->Release();
+    hr = pMgr->RegisterProfile(
+        CLSID_CantoIME,
+        TEXTSERVICE_LANGID,
+        GUID_Profile,
+        TEXTSERVICE_DESC,
+        static_cast<ULONG>(wcslen(TEXTSERVICE_DESC)),
+        module,                     // icon file (this DLL)
+        n,                          // length of the module path, in chars
+        TEXTSERVICE_ICON_INDEX,     // 0 -> the DLL's icon resource
+        nullptr,                    // no substitute keyboard layout
+        0,                          // no preferred layout
+        FALSE,                      // NOT enabled by default (obey add/remove)
+        0);                         // dwFlags: 0 -> visible in the settings UI
+
+    pMgr->Release();
     return hr;
 }
 
 static void UnregisterProfile()
 {
-    ITfInputProcessorProfiles* pProfiles = nullptr;
+    ITfInputProcessorProfileMgr* pMgr = nullptr;
     if (SUCCEEDED(CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
-                                   CLSCTX_INPROC_SERVER, IID_ITfInputProcessorProfiles,
-                                   reinterpret_cast<void**>(&pProfiles))))
+                                   CLSCTX_INPROC_SERVER, IID_ITfInputProcessorProfileMgr,
+                                   reinterpret_cast<void**>(&pMgr))))
     {
-        pProfiles->Unregister(CLSID_CantoIME);
-        pProfiles->Release();
+        pMgr->UnregisterProfile(CLSID_CantoIME, TEXTSERVICE_LANGID, GUID_Profile, 0);
+        pMgr->Release();
     }
 }
 

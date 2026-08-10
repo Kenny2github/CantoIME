@@ -417,11 +417,13 @@ LRESULT CALLBACK CTextService::LowLevelKeyboardProc(int code, WPARAM wParam, LPA
         {
             if (isShift)
             {
-                // First press (ignore auto-repeat): arm the lone-Shift toggle.
+                // First press (ignore auto-repeat): arm the lone-Shift toggle and
+                // remember which shift it was (for the Left/Right/Both setting).
                 if (!s_kbdOwner->m_kbShiftDown)
                 {
                     s_kbdOwner->m_kbShiftDown = true;
                     s_kbdOwner->m_kbShiftLone = true;
+                    s_kbdOwner->m_kbShiftVk   = p->vkCode;
                 }
             }
             else
@@ -434,10 +436,11 @@ LRESULT CALLBACK CTextService::LowLevelKeyboardProc(int code, WPARAM wParam, LPA
             if (isShift)
             {
                 const bool lone = s_kbdOwner->m_kbShiftLone;
+                const DWORD vk  = s_kbdOwner->m_kbShiftVk;
                 s_kbdOwner->m_kbShiftDown = false;
                 s_kbdOwner->m_kbShiftLone = false;
-                // Run the toggle on the UI thread, not inside this hook.
-                if (lone && s_kbdOwner->m_hMsgWnd)
+                // Only the configured shift(s) toggle; run it on the UI thread.
+                if (lone && s_kbdOwner->ToggleKeyMatches(vk) && s_kbdOwner->m_hMsgWnd)
                     PostMessageW(s_kbdOwner->m_hMsgWnd, WM_CANTO_TOGGLE, 0, 0);
             }
         }
@@ -1457,10 +1460,22 @@ void CTextService::EndComposition(ITfContext* pic)
 // Per-user settings (HKCU): candidate font size + selected dictionary
 // ---------------------------------------------------------------------------
 
+bool CTextService::ToggleKeyMatches(DWORD vk) const
+{
+    switch (m_toggleKey)
+    {
+    case ToggleKeyMode::Both:       return vk == VK_LSHIFT || vk == VK_RSHIFT;
+    case ToggleKeyMode::LeftShift:  return vk == VK_LSHIFT;
+    case ToggleKeyMode::RightShift: return vk == VK_RSHIFT;
+    default:                        return false; // Neither
+    }
+}
+
 void CTextService::ApplySettings()
 {
     CantoSettings s = LoadSettings();
     m_candWnd.SetFontSize(s.fontSize);
+    m_toggleKey = s.toggleKey;
 
     // Reload the dictionary only if the resolved path actually changed.
     std::wstring path = ResolveDictionaryPath();

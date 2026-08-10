@@ -7,7 +7,7 @@
 #include <windows.h>
 #include "resource.h"
 
-IDD_OPTIONS DIALOGEX 0, 0, 300, 150
+IDD_OPTIONS DIALOGEX 0, 0, 300, 176
 STYLE DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "CantoIME Options"
 FONT 9, "Segoe UI", 400, 0, 0x1
@@ -18,13 +18,17 @@ BEGIN
     EDITTEXT        IDC_DICT_PATH, 10, 44, 208, 14, ES_AUTOHSCROLL
     PUSHBUTTON      "Browse...", IDC_BROWSE, 226, 43, 62, 16
 
-    LTEXT           "Candidate font size:", IDC_STATIC, 10, 72, 124, 9
-    COMBOBOX        IDC_FONTSIZE, 140, 70, 62, 160,
+    LTEXT           "Chinese/English toggle key:", IDC_STATIC, 10, 72, 124, 9
+    COMBOBOX        IDC_TOGGLE, 140, 70, 148, 100,
+                    CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+
+    LTEXT           "Candidate font size:", IDC_STATIC, 10, 96, 124, 9
+    COMBOBOX        IDC_FONTSIZE, 140, 94, 62, 160,
                     CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
 
     LTEXT           "Changes take effect next time you switch to CantoIME.",
-                    IDC_STATIC, 10, 98, 278, 9
+                    IDC_STATIC, 10, 124, 278, 9
 
-    DEFPUSHBUTTON   "OK", IDOK, 176, 124, 52, 16
-    PUSHBUTTON      "Cancel", IDCANCEL, 236, 124, 52, 16
+    DEFPUSHBUTTON   "OK", IDOK, 176, 150, 52, 16
+    PUSHBUTTON      "Cancel", IDCANCEL, 236, 150, 52, 16
 END

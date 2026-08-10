@@ -12,6 +12,7 @@
 static const wchar_t* kValDictSrc  = L"Dictionary";      // traditional|simplified|custom
 static const wchar_t* kValDictPath = L"DictionaryPath";  // used only for custom
 static const wchar_t* kValFontSize = L"CandidateFontSize";
+static const wchar_t* kValToggle   = L"ToggleKey";       // 0=none 1=L 2=R 3=both
 
 static const int kMinFont = 8;
 static const int kMaxFont = 72;
@@ -77,6 +78,8 @@ CantoSettings LoadSettings()
         DWORD dw = 0;
         if (ReadDword(hKey, kValFontSize, dw))
             s.fontSize = ClampFont(static_cast<int>(dw));
+        if (ReadDword(hKey, kValToggle, dw) && dw <= 3)
+            s.toggleKey = static_cast<ToggleKeyMode>(dw);
 
         RegCloseKey(hKey);
     }
@@ -111,6 +114,11 @@ bool SaveSettings(const CantoSettings& s)
     DWORD font = static_cast<DWORD>(ClampFont(s.fontSize));
     ok &= RegSetValueExW(hKey, kValFontSize, 0, REG_DWORD,
                          reinterpret_cast<const BYTE*>(&font), sizeof(font))
+          == ERROR_SUCCESS;
+
+    DWORD toggle = static_cast<DWORD>(s.toggleKey);
+    ok &= RegSetValueExW(hKey, kValToggle, 0, REG_DWORD,
+                         reinterpret_cast<const BYTE*>(&toggle), sizeof(toggle))
           == ERROR_SUCCESS;
 
     RegCloseKey(hKey);

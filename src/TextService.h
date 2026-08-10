@@ -18,6 +18,7 @@
 #include "Globals.h"
 #include "Dictionary.h"
 #include "CandidateWindow.h"
+#include "Settings.h"   // ToggleKeyMode
 
 #include <msctf.h>
 #include <ctffunc.h>   // ITfFunctionProvider / ITfFunction / ITfFnConfigure
@@ -194,6 +195,11 @@ private:
     HWND  m_hMsgWnd     = nullptr;
     bool  m_kbShiftDown = false; // Shift is currently held
     bool  m_kbShiftLone = false; // no other key pressed since Shift went down
+    DWORD m_kbShiftVk   = 0;     // which shift (VK_LSHIFT/RSHIFT) is being tracked
+    // Which shift(s) toggle mode (from settings). Neither disables the shift
+    // toggle (the 中/英 button still works).
+    ToggleKeyMode m_toggleKey = ToggleKeyMode::Both;
+    bool  ToggleKeyMatches(DWORD vk) const;
     void CreateMsgWindow();
     void DestroyMsgWindow();
     static LRESULT CALLBACK MsgWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
