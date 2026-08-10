@@ -301,15 +301,37 @@ void CTextService::ToggleInputMode()
 
 LRESULT CALLBACK CTextService::MsgWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-    if (msg == WM_CANTO_TOGGLE)
+    CTextService* self = reinterpret_cast<CTextService*>(
+        GetWindowLongPtrW(hWnd, GWLP_USERDATA));
+
+    switch (msg)
     {
-        CTextService* self = reinterpret_cast<CTextService*>(
-            GetWindowLongPtrW(hWnd, GWLP_USERDATA));
+    case WM_CANTO_TOGGLE:
         if (self)
             self->ToggleInputMode();
         return 0;
+
+    // Light/dark theme switched: WM_SETTINGCHANGE carries "ImmersiveColorSet".
+    // Re-query the button icons so their glyphs recolor with the OS, the way
+    // the built-in IMEs do.
+    case WM_SETTINGCHANGE:
+        if (self && lParam &&
+            lstrcmpiW(reinterpret_cast<LPCWSTR>(lParam), L"ImmersiveColorSet") == 0)
+            self->RefreshLangBarIcons();
+        break;
+
+    case WM_THEMECHANGED:
+        if (self)
+            self->RefreshLangBarIcons();
+        break;
     }
     return DefWindowProcW(hWnd, msg, wParam, lParam);
+}
+
+void CTextService::RefreshLangBarIcons()
+{
+    if (m_pMainButton) m_pMainButton->Update();
+    if (m_pModeButton) m_pModeButton->Update();
 }
 
 void CTextService::CreateMsgWindow()
@@ -330,8 +352,12 @@ void CTextService::CreateMsgWindow()
         s_registered = true;
     }
 
-    m_hMsgWnd = CreateWindowExW(0, kMsgWndClass, L"", 0, 0, 0, 0, 0,
-                                HWND_MESSAGE, nullptr, g_hInst, nullptr);
+    // A hidden *top-level* tool window (not a message-only window): only
+    // top-level windows receive the WM_SETTINGCHANGE theme broadcast. It is
+    // never shown and is kept out of the taskbar/alt-tab.
+    m_hMsgWnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                                kMsgWndClass, L"", WS_POPUP,
+                                0, 0, 0, 0, nullptr, nullptr, g_hInst, nullptr);
     if (m_hMsgWnd)
         SetWindowLongPtrW(m_hMsgWnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
 }
