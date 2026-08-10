@@ -8,6 +8,7 @@
 #include <windows.h>
 #include <cwctype>
 #include <algorithm>
+#include <unordered_set>
 
 // Converts a UTF-8 byte buffer to a wide (UTF-16) string.
 static std::wstring Utf8ToWide(const char* data, int len)
@@ -110,6 +111,20 @@ bool Dictionary::Load(const std::wstring& path)
                 ++s;
             if (s > tokStart)
                 cands.push_back(line.substr(tokStart, s - tokStart));
+        }
+
+        // Drop repeated characters within a key, preserving first-seen order.
+        // Several dictionary lines list their whole candidate set twice, which
+        // would otherwise surface every character as a duplicate candidate.
+        if (cands.size() > 1)
+        {
+            std::unordered_set<std::wstring> seen;
+            std::vector<std::wstring> unique;
+            unique.reserve(cands.size());
+            for (auto& c : cands)
+                if (seen.insert(c).second)
+                    unique.push_back(std::move(c));
+            cands = std::move(unique);
         }
 
         if (!cands.empty())
