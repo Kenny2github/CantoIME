@@ -70,11 +70,12 @@ English mode letters pass straight through as plain English.
 The input indicator itself shows **粵** (Yue / Cantonese) when CantoIME is the
 active input method, in place of the generic 繁體. The 中 / 英 mode icon follows
 the light/dark theme live (it is drawn on demand, so we recolor it). The 粵
-brand icon is a static mid-gray glyph — legible on both light and dark
-taskbars. It does **not** invert in dark mode the way the built-in IMEs do:
-that inversion is applied by Microsoft's IME host only to built-in/system IMEs,
-and a third-party TIP cannot opt into it (confirmed by pointing CantoIME at a
-built-in IME's own icon — it still rendered un-inverted).
+brand icon is a static Windows-8-style tile — a black glyph on a white box —
+legible on both light and dark taskbars. It does **not** invert in dark mode
+the way the built-in IMEs do: that inversion is applied by Microsoft's IME host
+only to built-in/system IMEs, and a third-party TIP cannot opt into it
+(confirmed by pointing CantoIME at a built-in IME's own icon — it still
+rendered un-inverted).
 
 ---
 
