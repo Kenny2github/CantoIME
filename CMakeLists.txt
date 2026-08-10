@@ -1,6 +1,13 @@
 # CMakeLists.txt
 #
-# Builds MinimalPinyinIME.dll, a Windows 11 TSF text service (in-proc COM DLL).
+# Builds CantoIME, a Windows 11 TSF text service (in-proc COM DLL).
+#
+# CantoIME ships one DLL per Traditional Chinese variant Windows offers:
+#   CantoIME-HK.dll  Chinese (Traditional, Hong Kong SAR)   LANGID 0x0C04
+#   CantoIME-TW.dll  Chinese (Traditional, Taiwan)          LANGID 0x0404
+#   CantoIME-MO.dll  Chinese (Traditional, Macao SAR)       LANGID 0x1404
+# The three share one source set; each is compiled with a CANTO_VARIANT_* define
+# that selects its LANGID, description, CLSID, profile GUID, and window class.
 #
 # Target: Windows x64. This CANNOT be built on macOS/Linux; it requires the
 # MSVC toolchain and the Windows SDK (msctf.h, ctffunc.h, etc.).
@@ -14,7 +21,7 @@ cmake_minimum_required(VERSION 3.20)
 # instead of hand-patching /MD|/MT flags. Must be set before project().
 cmake_policy(SET CMP0091 NEW)
 
-project(MinimalPinyinIME LANGUAGES CXX)
+project(CantoIME LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -26,12 +33,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 if(NOT WIN32)
     message(WARNING
-        "MinimalPinyinIME targets Windows only. Configuring on a non-Windows "
-        "host will not produce a usable DLL.")
+        "CantoIME targets Windows only. Configuring on a non-Windows host will "
+        "not produce a usable DLL.")
 endif()
 
-# The DLL. SHARED => produces MinimalPinyinIME.dll.
-add_library(MinimalPinyinIME SHARED
+set(CANTO_SOURCES
     src/Globals.cpp
     src/Dictionary.cpp
     src/CandidateWindow.cpp
@@ -39,43 +45,55 @@ add_library(MinimalPinyinIME SHARED
     src/dllmain.cpp
 )
 
-# Force the output name (drop any "lib" prefix that some toolchains add).
-set_target_properties(MinimalPinyinIME PROPERTIES
-    OUTPUT_NAME "MinimalPinyinIME"
-    PREFIX ""
-)
+# Defines one variant DLL: CantoIME-<tag>.dll compiled with -DCANTO_VARIANT_<tag>.
+function(add_canto_variant tag)
+    set(target "CantoIME-${tag}")
+    add_library(${target} SHARED ${CANTO_SOURCES})
 
-# Unicode + lean Windows headers.
-target_compile_definitions(MinimalPinyinIME PRIVATE
-    UNICODE
-    _UNICODE
-    WIN32_LEAN_AND_MEAN
-    NOMINMAX
-)
+    # Force the output name (drop any "lib" prefix that some toolchains add).
+    set_target_properties(${target} PROPERTIES
+        OUTPUT_NAME "CantoIME-${tag}"
+        PREFIX ""
+    )
 
-# Export the four standard COM entry points via the .def file.
-if(MSVC)
-    set_target_properties(MinimalPinyinIME PROPERTIES
-        LINK_FLAGS "/DEF:\"${CMAKE_CURRENT_SOURCE_DIR}/exports.def\"")
-    target_compile_options(MinimalPinyinIME PRIVATE /W4 /permissive-)
-endif()
+    # Unicode + lean Windows headers + this DLL's variant selector.
+    target_compile_definitions(${target} PRIVATE
+        UNICODE
+        _UNICODE
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+        CANTO_VARIANT_${tag}
+    )
 
-# System import libraries. TSF interface GUIDs and CLSIDs come from the SDK's
-# uuid.lib; the interfaces themselves are header-only (msctf.h/ctffunc.h).
-target_link_libraries(MinimalPinyinIME PRIVATE
-    user32
-    gdi32
-    ole32
-    oleaut32
-    advapi32
-    uuid
-    shell32   # SHGetFolderPath / SHGFP
-    imm32     # occasionally needed by TSF-adjacent code paths
-)
+    # Export the four standard COM entry points via the shared .def file.
+    if(MSVC)
+        set_target_properties(${target} PROPERTIES
+            LINK_FLAGS "/DEF:\"${CMAKE_CURRENT_SOURCE_DIR}/exports.def\"")
+        target_compile_options(${target} PRIVATE /W4 /permissive-)
+    endif()
 
-# Copy the sample dictionary next to the built DLL for convenient local testing.
-add_custom_command(TARGET MinimalPinyinIME POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_CURRENT_SOURCE_DIR}/dictionary.txt"
-        "$<TARGET_FILE_DIR:MinimalPinyinIME>/dictionary.txt"
-)
+    # System import libraries. TSF interface GUIDs and CLSIDs come from the SDK's
+    # uuid.lib; the interfaces themselves are header-only (msctf.h/ctffunc.h).
+    target_link_libraries(${target} PRIVATE
+        user32
+        gdi32
+        ole32
+        oleaut32
+        advapi32
+        uuid
+        shell32   # SHGetFolderPath / SHGFP
+        imm32     # occasionally needed by TSF-adjacent code paths
+    )
+
+    # Copy the sample dictionary next to the built DLL for convenient local
+    # testing. All variants read the same dictionary.
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/dictionary.txt"
+            "$<TARGET_FILE_DIR:${target}>/dictionary.txt"
+    )
+endfunction()
+
+add_canto_variant(HK)  # Hong Kong SAR (default)
+add_canto_variant(TW)  # Taiwan
+add_canto_variant(MO)  # Macao SAR
