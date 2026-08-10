@@ -55,7 +55,9 @@ function Render-Glyph([int]$canvas,[double]$fontpx) {
 function New-Dib([int]$size) {
     $g1=Render-Glyph ($size*3) $size            # measure ink at em=size
     $ink=Get-Ink $g1; $g1.Dispose()
-    $g2=Render-Glyph ($size*3) ($size*$size/[math]::Max($ink.W,$ink.H))  # scale ink -> full tile
+    # Fit the glyph to ~86% of the tile, leaving the 1px border + ~2px padding.
+    $target=$size*0.86
+    $g2=Render-Glyph ($size*3) ($size*$target/[math]::Max($ink.W,$ink.H))
     $ink2=Get-Ink $g2
 
     $tile=New-Object System.Drawing.Bitmap($size,$size,[System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
