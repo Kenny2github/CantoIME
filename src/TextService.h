@@ -9,7 +9,7 @@
 //   * ITfKeyEventSink          - keyboard input (the heart of the IME)
 //   * ITfCompositionSink       - notified when a composition is terminated
 //
-// Composition editing (inserting the pinyin buffer, committing a candidate,
+// Composition editing (inserting the romanization buffer, committing a candidate,
 // cancelling) is performed inside edit sessions, since TSF requires document
 // mutation to happen within an ITfEditSession granted a valid edit cookie.
 
@@ -90,7 +90,7 @@ private:
 
     // Key handling helpers (all issue edit sessions as needed).
     bool IsComposing() const { return m_pComposition != nullptr; }
-    void BuildCandidates();          // fills m_candidates from m_pinyin
+    void BuildCandidates();          // fills m_candidates from m_romanization
     void UpdateCandidates(ITfContext* pic);
     void MoveCandidateWindowToCaret(ITfContext* pic);
     void StartOrUpdateComposition(ITfContext* pic);
@@ -148,10 +148,10 @@ private:
 
     DWORD m_dwThreadMgrEventSinkCookie;
 
-    // The pinyin composition buffer (ASCII letters typed so far).
-    std::wstring m_pinyin;
+    // The romanization composition buffer (ASCII letters typed so far).
+    std::wstring m_romanization;
 
-    // Candidates currently shown (built from m_pinyin).
+    // Candidates currently shown (built from m_romanization).
     std::vector<Candidate> m_candidates;
 
     // Selection / paging state (see the helpers above).

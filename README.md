@@ -1,10 +1,9 @@
 # CantoIME
 
 A minimal, buildable Windows 11 **TSF (Text Services Framework)** text service
-that behaves like Microsoft Bopomofo in HanYu Pinyin mode, but with a
-**customizable pinyin -> character dictionary loaded at runtime** from a plain
-text file. It is an in-proc COM DLL that registers as a Traditional Chinese
-input method.
+that behaves like Microsoft Bopomofo, but with a **customizable romanization ->
+character dictionary loaded at runtime** from a plain text file. It is an in-proc
+COM DLL that registers as a Traditional Chinese input method.
 
 CantoIME ships **one DLL per Traditional Chinese variant Windows offers**, so
 you can enable it under whichever locale(s) you use:
@@ -23,19 +22,11 @@ the installer treats them as mutually exclusive: you pick **one** variant to
 install, with **Hong Kong SAR** as the default. (You can still register the
 other DLLs by hand if you want more than one.)
 
-> **Honest caveat:** this repository was authored on **macOS** and has **NOT
-> been compiled or tested on Windows**. It targets Windows 11 x64 and cannot be
-> built on macOS/Linux (it needs the MSVC toolchain + Windows SDK). Expect to
-> iterate on minor build errors (missing SDK symbols, link flags, header
-> ordering). The code follows the documented TSF COM interfaces and the general
-> "SampleIME" architecture, but it is original code, not a copy of Microsoft's
-> sample.
-
 ---
 
 ## What it does
 
-- You type ASCII letters `a`–`z`. They accumulate in a **pinyin buffer** shown
+- You type ASCII letters `a`–`z`. They accumulate in a **romanization buffer** shown
   as an underlined TSF composition inside the target app.
 - On each keystroke the buffer is looked up in the dictionary and matching
   candidate characters appear in a small **owner-drawn popup** near the caret,
@@ -71,7 +62,7 @@ other DLLs by hand if you want more than one.)
 line:
 
 ```
-pinyin<TAB or spaces>char1 char2 char3 ...
+romanization<TAB or spaces>char1 char2 char3 ...
 ```
 
 Candidates are space-separated. Lines beginning with `#` are comments. Matching
@@ -92,7 +83,7 @@ The DLL resolves the dictionary path at activation time, in this order:
 3. **`%APPDATA%\CantoIME\dictionary.txt`.**
 
 The first existing file wins. If none exist, no candidates are produced (typing
-still works; Enter commits the raw pinyin).
+still works; Enter commits the raw romanization).
 
 To customize at runtime: edit the file the registry points at (or drop your own
 `dictionary.txt` next to the DLL), then re-select the IME (or sign out/in) so it
@@ -103,7 +94,7 @@ reloads on the next activation.
 ## Repository layout
 
 ```
-pinyin-ime-sample/
+CantoIME/
 ├── CMakeLists.txt          # builds CantoIME-HK/-TW/-MO.dll (x64, C++17, Unicode)
 ├── exports.def             # exports the 4 COM entry points
 ├── dictionary.txt          # sample dictionary (~35 syllables)
@@ -138,8 +129,8 @@ pinyin-ime-sample/
 ### 1. Clone
 
 ```
-git clone <your-fork-url> pinyin-ime-sample
-cd pinyin-ime-sample
+git clone <your-fork-url> CantoIME
+cd CantoIME
 ```
 
 ### 2. Build the DLL with CMake
@@ -207,14 +198,24 @@ DLLs.
 Each variant registers under its matching locale: **Hong Kong SAR (0x0C04)**,
 **Taiwan (0x0404)**, or **Macao SAR (0x1404)** — all under Chinese (Traditional).
 
-1. Open **Settings > Time & language > Language & region**.
-2. If the **Chinese (Traditional)** locale you registered is not listed, click
-   **Add a language** and add it.
-3. Sign out and back in (or restart) so Windows picks up the newly registered
+Once the DLL is registered, the IME appears in the input switcher on its own:
+you do **not** have to add the Chinese (Traditional) language pack for it to
+show up, so if this is the only Chinese keyboard you plan to use, you can skip
+the "Add a language" step entirely.
+
+If you *do* want the matching locale added (e.g. you also use other Chinese
+input methods and want them grouped under it), it is best to add the locale
+**before** installing this IME, so Windows slots the new keyboard under it
+cleanly.
+
+1. (Optional) In **Settings > Time & language > Language & region**, click
+   **Add a language** and add the **Chinese (Traditional)** locale for your
+   variant — do this *before* installing if you want it.
+2. Sign out and back in (or restart) so Windows picks up the newly registered
    text service.
-4. Switch input methods with **Win + Space** (or the language button on the
+3. Switch input methods with **Win + Space** (or the language button on the
    taskbar) until the **"CantoIME (…)"** entry for your variant is selected.
-5. Type in any edit control (Notepad, WordPad, the search box) to see the
+4. Type in any edit control (Notepad, WordPad, the search box) to see the
    composition + candidate window.
 
 ### 6. Customize the dictionary at runtime
@@ -256,7 +257,7 @@ also edit `dictionary.txt` in the repo before building/installing.
 
 ## Known limitations (this is a sample)
 
-- **No tone input** and no fuzzy/pinyin correction.
+- **No tone input** and no fuzzy/romanization correction.
 - **Greedy segmentation.** Leading syllables are locked to their single best
   character using a longest-exact-match scan; there is no per-syllable candidate
   choice for the locked portion and no re-segmentation backtracking.
@@ -283,4 +284,4 @@ at the cost of more verbose authoring.
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE). Author: "Sample".
+MIT — see [`LICENSE`](LICENSE). Author: AbyxDev.

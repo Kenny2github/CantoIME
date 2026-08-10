@@ -1,19 +1,20 @@
 ; setup.iss  -  Inno Setup script for CantoIME
 ;
-; Builds CantoIME-Setup.exe which lets the user pick any combination of the
-; Traditional Chinese variants Windows offers and, for each chosen variant:
+; Builds CantoIME-Setup.exe which lets the user pick ONE of the Traditional
+; Chinese variants Windows offers (they share a dictionary, so only one is
+; installable at a time) and, for the chosen variant:
 ;   * installs its DLL to {autopf}\CantoIME (64-bit),
 ;   * registers the TSF text service via 64-bit regsvr32 on install,
 ;   * unregisters it via regsvr32 /u on uninstall (before files are removed).
 ; The shared dictionary and HKLM\Software\CantoIME\DictionaryPath are always
-; installed. "Chinese (Traditional, Hong Kong SAR)" is the sole default.
+; installed. "Chinese (Traditional, Hong Kong SAR)" is the default selection.
 ;
 ; Compile with:  iscc installer\setup.iss
 ; (Assumes the DLLs were already built to ..\build\Release\CantoIME-*.dll)
 
 #define MyAppName "CantoIME"
 #define MyAppVersion "1.0.0"
-#define MyAppPublisher "CantoIME"
+#define MyAppPublisher "AbyxDev"
 
 [Setup]
 AppId={{C1D2E3F4-A5B6-4C7D-8E9F-0A1B2C3D4E5F}
