@@ -28,7 +28,12 @@
 
 #include <msctf.h>
 #include <ctffunc.h>   // ITfContextView / display helpers live in msctf; kept for completeness
+#include <windowsx.h>  // GET_WHEEL_DELTA_WPARAM
 #include <unordered_set>
+
+// Statics backing the low-level mouse wheel hook.
+HHOOK         CTextService::s_wheelHook  = nullptr;
+CTextService* CTextService::s_wheelOwner = nullptr;
 
 // ---------------------------------------------------------------------------
 // Construction / destruction
@@ -141,8 +146,13 @@ STDMETHODIMP CTextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD 
     // Load the dictionary at activation using the documented search order.
     m_dict.Load(ResolveDictionaryPath());
 
-    // Prepare (but do not show) the candidate window.
+    // Prepare (but do not show) the candidate window, and route candidate
+    // clicks back to us so a mouse click accepts that candidate.
     m_candWnd.EnsureCreated();
+    m_candWnd.SetOnAccept([this](size_t globalIndex)
+    {
+        OnCandidateClicked(globalIndex);
+    });
 
     return S_OK;
 
@@ -154,9 +164,13 @@ fail:
 STDMETHODIMP CTextService::Deactivate()
 {
     // Ensure any in-flight composition is torn down and UI hidden.
+    RemoveWheelHook();
+    ClearContext();
     m_candWnd.Hide();
     m_pinyin.clear();
     m_candidates.clear();
+    ResetSelection();
+    m_twoD = false;
 
     if (m_pComposition)
     {
@@ -249,9 +263,13 @@ STDMETHODIMP CTextService::OnSetFocus(ITfDocumentMgr* /*pdimFocus*/, ITfDocument
 {
     // Focus moved to a different document: hide UI and drop any buffer. We do
     // not try to carry a composition across documents in this sample.
+    RemoveWheelHook();
+    ClearContext();
     m_candWnd.Hide();
     m_pinyin.clear();
     m_candidates.clear();
+    ResetSelection();
+    m_twoD = false;
     if (m_pComposition)
     {
         m_pComposition->Release();
@@ -315,6 +333,9 @@ STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* /*pic*/, WPARAM wParam, LPA
         if (IsLetterVK(wParam) ||
             wParam == VK_BACK || wParam == VK_RETURN ||
             wParam == VK_ESCAPE || wParam == VK_SPACE ||
+            wParam == VK_UP || wParam == VK_DOWN ||
+            wParam == VK_LEFT || wParam == VK_RIGHT ||
+            wParam == VK_PRIOR || wParam == VK_NEXT ||
             IsDigit1to9VK(wParam, d))
         {
             *pfEaten = TRUE;
@@ -382,32 +403,51 @@ STDMETHODIMP CTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM /*lP
         CancelComposition(pic);
         *pfEaten = TRUE;
     }
-    else if (wParam == VK_RETURN)
+    else if (wParam == VK_RETURN || wParam == VK_SPACE)
     {
-        // Commit the raw typed pinyin as-is.
-        CommitRaw(pic);
-        *pfEaten = TRUE;
-    }
-    else if (wParam == VK_SPACE)
-    {
+        // Enter and Space both accept the currently selected candidate.
         if (!m_candidates.empty())
-            CommitCandidate(pic, 0);
+            CommitCandidate(pic, m_sel);
         else
             CommitRaw(pic);
         *pfEaten = TRUE;
     }
+    else if (wParam == VK_DOWN || wParam == VK_UP ||
+             wParam == VK_LEFT || wParam == VK_RIGHT ||
+             wParam == VK_NEXT || wParam == VK_PRIOR)
+    {
+        // Selection / paging navigation. Always eaten while composing so the
+        // app never sees these keys; they simply do nothing with no candidates.
+        if (!m_candidates.empty())
+        {
+            switch (wParam)
+            {
+            case VK_DOWN:  SelDown();  break;
+            case VK_UP:    SelUp();    break;
+            case VK_RIGHT: SelRight(); break;
+            case VK_LEFT:  SelLeft();  break;
+            case VK_NEXT:  PageDown(); break; // PgDn
+            case VK_PRIOR: PageUp();   break; // PgUp
+            }
+            RefreshCandView();
+        }
+        *pfEaten = TRUE;
+    }
     else if (IsDigit1to9VK(wParam, digit))
     {
-        if (digit < static_cast<int>(m_candidates.size()))
+        // Number keys accept the candidate in that row of the SELECTED page
+        // (column), not the global list.
+        size_t idx = SelectedPageBase() + static_cast<size_t>(digit);
+        if (idx < m_candidates.size())
         {
-            CommitCandidate(pic, static_cast<size_t>(digit));
+            CommitCandidate(pic, idx);
             *pfEaten = TRUE;
         }
         else
         {
-            // No candidate at that slot: commit best result, let digit through.
+            // No candidate at that slot: commit the selection, let digit through.
             if (!m_candidates.empty())
-                CommitCandidate(pic, 0);
+                CommitCandidate(pic, m_sel);
             else
                 CommitRaw(pic);
             *pfEaten = FALSE;
@@ -415,9 +455,9 @@ STDMETHODIMP CTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM /*lP
     }
     else
     {
-        // Any other key: commit best result, then let the key pass through.
+        // Any other key: commit the selection, then let the key pass through.
         if (!m_candidates.empty())
-            CommitCandidate(pic, 0);
+            CommitCandidate(pic, m_sel);
         else
             CommitRaw(pic);
         *pfEaten = FALSE;
@@ -452,9 +492,13 @@ STDMETHODIMP CTextService::OnCompositionTerminated(TfEditCookie /*ec*/, ITfCompo
 {
     // The system (e.g. focus change, mouse click) ended our composition.
     // Release our reference and clear UI/state.
+    RemoveWheelHook();
+    ClearContext();
     m_candWnd.Hide();
     m_pinyin.clear();
     m_candidates.clear();
+    ResetSelection();
+    m_twoD = false;
     if (m_pComposition)
     {
         m_pComposition->Release();
@@ -555,10 +599,18 @@ void CTextService::BuildCandidates()
 
 void CTextService::UpdateCandidates(ITfContext* pic)
 {
+    // Remember the context so click/wheel handlers can commit into it.
+    SetContext(pic);
+
     BuildCandidates();
+
+    // The list just changed; selection returns to the first candidate. The 2D
+    // latch (m_twoD) persists for the whole composition, as specified.
+    ResetSelection();
 
     if (m_candidates.empty())
     {
+        RemoveWheelHook();
         m_candWnd.Hide();
         return;
     }
@@ -569,7 +621,11 @@ void CTextService::UpdateCandidates(ITfContext* pic)
         displays.push_back(c.display);
 
     m_candWnd.SetCandidates(displays);
+    m_candWnd.SetView(m_pageBase, m_sel, m_twoD, kMaxCols);
     MoveCandidateWindowToCaret(pic);
+
+    // Wheel ticks act as up/down; install the hook while the list is shown.
+    InstallWheelHook();
 }
 
 // Positions the candidate window just below the caret using
@@ -686,26 +742,278 @@ void CTextService::CommitCandidate(ITfContext* pic, size_t index)
         return;
     std::wstring ch = m_candidates[index].commit;
     RequestEditSession(pic, EditAction::Commit, ch);
-    m_pinyin.clear();
-    m_candidates.clear();
-    m_candWnd.Hide();
+    EndSelectionSession();
 }
 
 void CTextService::CommitRaw(ITfContext* pic)
 {
     std::wstring raw = m_pinyin;
     RequestEditSession(pic, EditAction::Commit, raw);
-    m_pinyin.clear();
-    m_candidates.clear();
-    m_candWnd.Hide();
+    EndSelectionSession();
 }
 
 void CTextService::CancelComposition(ITfContext* pic)
 {
     RequestEditSession(pic, EditAction::Cancel, std::wstring());
+    EndSelectionSession();
+}
+
+// Shared teardown after a composition ends (commit/cancel): clear the buffer,
+// candidate list, selection/paging latch, the wheel hook, and the remembered
+// context, and hide the window.
+void CTextService::EndSelectionSession()
+{
+    RemoveWheelHook();
+    ClearContext();
     m_pinyin.clear();
     m_candidates.clear();
+    ResetSelection();
+    m_twoD = false;
     m_candWnd.Hide();
+}
+
+// ---------------------------------------------------------------------------
+// Candidate selection / paging
+// ---------------------------------------------------------------------------
+
+void CTextService::ResetSelection()
+{
+    m_sel = 0;
+    m_pageBase = 0;
+}
+
+// Number of candidate columns currently displayed from m_pageBase. Always 1 in
+// 1D mode; up to kMaxCols in 2D mode. Kept identical to the window's own layout
+// math so navigation and hit-testing agree.
+size_t CTextService::ColsShown() const
+{
+    if (!m_twoD)
+        return 1;
+    size_t n = m_candidates.size();
+    if (m_pageBase >= n)
+        return 1;
+    size_t cols = (n - m_pageBase + kPageSize - 1) / kPageSize; // ceil
+    if (cols > kMaxCols) cols = kMaxCols;
+    if (cols < 1) cols = 1;
+    return cols;
+}
+
+// First global index of the column/page that holds the current selection.
+size_t CTextService::SelectedPageBase() const
+{
+    if (m_candidates.empty())
+        return 0;
+    size_t col = m_twoD ? (m_sel - m_pageBase) / kPageSize : 0;
+    return m_pageBase + col * kPageSize;
+}
+
+void CTextService::SelDown()
+{
+    size_t n = m_candidates.size();
+    if (n == 0) return;
+
+    if (!m_twoD)
+    {
+        // Move down within the page; at the 9th, reveal the next page.
+        if (m_sel + 1 < n && m_sel + 1 < m_pageBase + kPageSize)
+            ++m_sel;
+        else if (m_pageBase + kPageSize < n)
+        {
+            m_pageBase += kPageSize;
+            m_sel = m_pageBase;
+        }
+    }
+    else
+    {
+        // 2D: move within the current column only (no vertical paging).
+        size_t row = (m_sel - m_pageBase) % kPageSize;
+        if (row + 1 < kPageSize && m_sel + 1 < n)
+            ++m_sel;
+    }
+}
+
+void CTextService::SelUp()
+{
+    if (m_candidates.empty()) return;
+
+    if (!m_twoD)
+    {
+        if (m_sel > m_pageBase)
+            --m_sel;
+        else if (m_pageBase >= kPageSize)
+        {
+            m_pageBase -= kPageSize;
+            m_sel = m_pageBase + kPageSize - 1; // last candidate of the prev page
+        }
+    }
+    else
+    {
+        size_t row = (m_sel - m_pageBase) % kPageSize;
+        if (row > 0)
+            --m_sel;
+    }
+}
+
+void CTextService::SelRight()
+{
+    size_t n = m_candidates.size();
+    if (n == 0) return;
+
+    // First right-arrow latches 2D mode for the rest of the composition. The
+    // extra columns simply appear; the selection stays where it was.
+    if (!m_twoD)
+    {
+        m_twoD = true;
+        return;
+    }
+
+    size_t col  = (m_sel - m_pageBase) / kPageSize;
+    size_t cols = ColsShown();
+    if (col + 1 < cols)
+    {
+        size_t target = m_sel + kPageSize;      // same row, next column
+        if (target >= n) target = n - 1;        // clamp into a partial column
+        m_sel = target;
+    }
+    else if (m_pageBase + cols * kPageSize < n)
+    {
+        // At the rightmost visible column: scroll the grid one column right.
+        m_pageBase += kPageSize;
+        size_t target = m_sel + kPageSize;
+        if (target >= n) target = n - 1;
+        m_sel = target;
+    }
+}
+
+void CTextService::SelLeft()
+{
+    if (m_candidates.empty()) return;
+    if (!m_twoD) return; // left has no effect before 2D is engaged
+
+    size_t col = (m_sel - m_pageBase) / kPageSize;
+    if (col > 0)
+    {
+        m_sel -= kPageSize; // same row, previous column
+    }
+    else if (m_pageBase >= kPageSize)
+    {
+        // Leftmost column: scroll the grid one column left.
+        m_pageBase -= kPageSize;
+        m_sel      -= kPageSize;
+    }
+}
+
+void CTextService::PageDown()
+{
+    size_t n = m_candidates.size();
+    if (n == 0) return;
+
+    size_t delta = m_twoD ? ColsShown() * kPageSize : kPageSize;
+    if (m_pageBase + delta < n)
+    {
+        m_pageBase += delta;
+        m_sel = m_pageBase; // reset to the first candidate of the new page
+    }
+}
+
+void CTextService::PageUp()
+{
+    if (m_candidates.empty()) return;
+
+    size_t delta = m_twoD ? ColsShown() * kPageSize : kPageSize;
+    if (m_pageBase >= delta)
+        m_pageBase -= delta;
+    else
+        m_pageBase = 0;
+    m_sel = m_pageBase;
+}
+
+void CTextService::RefreshCandView()
+{
+    m_candWnd.SetView(m_pageBase, m_sel, m_twoD, kMaxCols);
+}
+
+// ---------------------------------------------------------------------------
+// Mouse click / wheel
+// ---------------------------------------------------------------------------
+
+void CTextService::OnCandidateClicked(size_t globalIndex)
+{
+    if (!m_pContext || globalIndex >= m_candidates.size())
+        return;
+    CommitCandidate(m_pContext, globalIndex);
+}
+
+void CTextService::OnWheel(int ticks)
+{
+    if (m_candidates.empty() || ticks == 0)
+        return;
+    int steps = ticks < 0 ? -ticks : ticks;
+    for (int i = 0; i < steps; ++i)
+    {
+        if (ticks > 0) SelUp();   // wheel up  -> up arrow
+        else           SelDown(); // wheel down -> down arrow
+    }
+    RefreshCandView();
+}
+
+// ---------------------------------------------------------------------------
+// Context bookkeeping + wheel hook
+// ---------------------------------------------------------------------------
+
+void CTextService::SetContext(ITfContext* pic)
+{
+    if (m_pContext == pic)
+        return;
+    if (pic)
+        pic->AddRef();
+    if (m_pContext)
+        m_pContext->Release();
+    m_pContext = pic;
+}
+
+void CTextService::ClearContext()
+{
+    if (m_pContext)
+    {
+        m_pContext->Release();
+        m_pContext = nullptr;
+    }
+}
+
+void CTextService::InstallWheelHook()
+{
+    s_wheelOwner = this;
+    if (s_wheelHook)
+        return; // already installed
+    s_wheelHook = SetWindowsHookExW(WH_MOUSE_LL, LowLevelMouseProc, g_hInst, 0);
+}
+
+void CTextService::RemoveWheelHook()
+{
+    if (s_wheelHook)
+    {
+        UnhookWindowsHookEx(s_wheelHook);
+        s_wheelHook = nullptr;
+    }
+    if (s_wheelOwner == this)
+        s_wheelOwner = nullptr;
+}
+
+LRESULT CALLBACK CTextService::LowLevelMouseProc(int code, WPARAM wParam, LPARAM lParam)
+{
+    if (code == HC_ACTION && wParam == WM_MOUSEWHEEL &&
+        s_wheelOwner && s_wheelOwner->m_candWnd.IsVisible())
+    {
+        const MSLLHOOKSTRUCT* p = reinterpret_cast<const MSLLHOOKSTRUCT*>(lParam);
+        int delta = GET_WHEEL_DELTA_WPARAM(p->mouseData);
+        int ticks = delta / WHEEL_DELTA;
+        if (ticks == 0)
+            ticks = (delta > 0) ? 1 : -1;
+        s_wheelOwner->OnWheel(ticks);
+        return 1; // eat: the wheel drives candidate selection while shown
+    }
+    return CallNextHookEx(nullptr, code, wParam, lParam);
 }
 
 // ---- These four run INSIDE a granted edit cookie ----

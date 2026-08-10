@@ -98,6 +98,42 @@ private:
     void CommitRaw(ITfContext* pic);
     void CancelComposition(ITfContext* pic);
     void EndComposition(ITfContext* pic); // terminates cleanly, clears buffer
+    void EndSelectionSession();           // shared teardown after commit/cancel
+
+    // --- Candidate selection / paging -------------------------------------
+    // The window shows pages of kPageSize candidates. In 1D mode a single
+    // column is shown and up/down page vertically at the boundaries. Once the
+    // right arrow is pressed the view latches into 2D mode for the rest of the
+    // composition: further pages appear as columns to the right and left/right
+    // move between them.
+    static const size_t kPageSize = MPIME_MAX_CANDIDATES; // 9
+    static const size_t kMaxCols  = 5;                    // max width in 2D mode
+
+    size_t ColsShown() const;      // columns currently displayed from m_pageBase
+    void ResetSelection();         // selection -> first candidate, page -> 0
+    void SelDown();                // vertical arrow / wheel down
+    void SelUp();                  // vertical arrow / wheel up
+    void SelRight();               // right arrow (latches 2D)
+    void SelLeft();                // left arrow (2D only)
+    void PageDown();               // PgDn
+    void PageUp();                 // PgUp
+    void RefreshCandView();        // push selection/paging state to the window
+    size_t SelectedPageBase() const; // first index of the selected column/page
+
+    // Callbacks wired into the candidate window.
+    void OnCandidateClicked(size_t globalIndex); // mouse click accepts
+    void OnWheel(int ticks);                     // wheel ticks act as up/down
+
+    // Remembers the context we are composing in, so click/wheel handlers (which
+    // arrive outside a key event) can commit into the right document.
+    void SetContext(ITfContext* pic);
+    void ClearContext();
+
+    // Low-level mouse hook so wheel ticks reach us even though the popup never
+    // takes focus (and thus never receives WM_MOUSEWHEEL itself).
+    void InstallWheelHook();
+    void RemoveWheelHook();
+    static LRESULT CALLBACK LowLevelMouseProc(int code, WPARAM wParam, LPARAM lParam);
 
     // Requests a synchronous read/write edit session running the given lambda
     // wrapper. Implemented by a small ITfEditSession adapter in the .cpp.
@@ -118,8 +154,20 @@ private:
     // Candidates currently shown (built from m_pinyin).
     std::vector<Candidate> m_candidates;
 
+    // Selection / paging state (see the helpers above).
+    size_t m_sel      = 0;      // global index of the selected candidate
+    size_t m_pageBase = 0;      // global index of the top-left displayed cell
+    bool   m_twoD     = false;  // latched once the right arrow is pressed
+
+    // Context we are currently composing in (AddRef'd), for click/wheel commits.
+    ITfContext* m_pContext = nullptr;
+
     Dictionary      m_dict;
     CandidateWindow m_candWnd;
+
+    // Active service for the low-level mouse hook (one composition at a time).
+    static HHOOK          s_wheelHook;
+    static CTextService*  s_wheelOwner;
 };
 
 // Creates an instance of the text service (used by the class factory).
