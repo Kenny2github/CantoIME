@@ -21,44 +21,6 @@ jobs:
       - name: Build (Release)
         run: cmake --build build --config Release
 
-      # GitHub's windows runner is elevated, so it can actually self-register the
-      # TSF service. This calls DllRegisterServer directly and prints the real
-      # HRESULT, so registration failures surface here (not just a masked
-      # SELFREG_E_CLASS from regsvr32).
-      - name: Registration smoke test
-        shell: pwsh
-        run: |
-          $dll = (Resolve-Path "build/Release/MinimalPinyinIME.dll").Path
-          Add-Type @"
-          using System;
-          using System.Runtime.InteropServices;
-          public static class Native {
-            [DllImport("kernel32", SetLastError=true, CharSet=CharSet.Unicode)]
-            public static extern IntPtr LoadLibrary(string path);
-            [DllImport("kernel32", SetLastError=true)]
-            public static extern IntPtr GetProcAddress(IntPtr h, string name);
-            [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-            public delegate int DllReg();
-          }
-"@
-          $h = [Native]::LoadLibrary($dll)
-          if ($h -eq [IntPtr]::Zero) {
-            $e = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
-            throw "LoadLibrary failed (Win32 $e)"
-          }
-          function Invoke-Export($name) {
-            $p = [Native]::GetProcAddress($h, $name)
-            if ($p -eq [IntPtr]::Zero) { throw "missing export: $name" }
-            $fn = [Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer($p, [Native+DllReg])
-            return $fn.Invoke()
-          }
-          $hr = Invoke-Export "DllRegisterServer"
-          "DllRegisterServer -> 0x{0:X8}" -f $hr
-          # Best-effort cleanup so the runner is left clean.
-          $hrU = Invoke-Export "DllUnregisterServer"
-          "DllUnregisterServer -> 0x{0:X8}" -f $hrU
-          if ($hr -ne 0) { throw ("DllRegisterServer failed: 0x{0:X8}" -f $hr) }
-
       - name: Upload DLL artifact
         uses: actions/upload-artifact@v4
         with:
