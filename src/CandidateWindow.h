@@ -62,6 +62,10 @@ public:
     size_t ColumnsThatFit(size_t pageBase, bool twoD, size_t maxCols) const;
 
 private:
+    // One displayed column: its left edge, width, first global candidate index,
+    // and how many rows it holds (up to the page size).
+    struct Col { int x; int w; size_t start; size_t rows; };
+
     static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
     void OnPaint(HWND hWnd);
     void OnClick(int x, int y);
@@ -74,10 +78,6 @@ private:
     std::vector<Col> BuildCols(size_t pageBase, bool twoD, size_t maxCols) const;
     // Work-area width (px) of the monitor nearest the current anchor.
     int AvailWidth() const;
-
-    // One displayed column: its left edge, width, first global candidate index,
-    // and how many rows it holds (up to the page size).
-    struct Col { int x; int w; size_t start; size_t rows; };
 
     HWND  m_hWnd    = nullptr;
     HFONT m_hFont   = nullptr;
