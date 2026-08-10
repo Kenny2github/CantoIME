@@ -48,10 +48,10 @@ set(CANTO_SOURCES
 
 # Generate the 粵 profile icon (what the language indicator shows) at build time
 # as a linkable .res. We emit a .res rather than an .rc because rc.exe rejects
-# the hand-authored 8bpp / opaque-tile icon format that the shell needs to theme
-# the icon (RC2176 "old DIB"); a .res is linked verbatim, bypassing rc.exe. The
-# glyph is rasterized with the Windows fonts on the build machine.
-set(CANTO_RC "")
+# the hand-authored 8bpp / DIB icon format that matches the built-in IMEs
+# (RC2176 "old DIB"); a .res is linked verbatim, bypassing rc.exe. The glyph is
+# rasterized with the Windows fonts on the build machine.
+set(CANTO_RES "")
 if(MSVC)
     set(CANTO_RES "${CMAKE_CURRENT_BINARY_DIR}/canto.res")
     add_custom_command(
@@ -64,14 +64,13 @@ if(MSVC)
         VERBATIM)
     add_custom_target(canto_icon DEPENDS ${CANTO_RES})
     # A .res added to a target's sources is passed straight to the linker.
-    set(CANTO_RC "${CANTO_RES}")
     set_source_files_properties(${CANTO_RES} PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE)
 endif()
 
 # Defines one variant DLL: CantoIME-<tag>.dll compiled with -DCANTO_VARIANT_<tag>.
 function(add_canto_variant tag)
     set(target "CantoIME-${tag}")
-    add_library(${target} SHARED ${CANTO_SOURCES} ${CANTO_RC})
+    add_library(${target} SHARED ${CANTO_SOURCES} ${CANTO_RES})
 
     # Force the output name (drop any "lib" prefix that some toolchains add).
     set_target_properties(${target} PROPERTIES
@@ -93,7 +92,7 @@ function(add_canto_variant tag)
         set_target_properties(${target} PROPERTIES
             LINK_FLAGS "/DEF:\"${CMAKE_CURRENT_SOURCE_DIR}/exports.def\"")
         target_compile_options(${target} PRIVATE /W4 /permissive-)
-        add_dependencies(${target} canto_icon) # generate the .ico before the .rc
+        add_dependencies(${target} canto_icon) # generate the .res before linking
     endif()
 
     # System import libraries. TSF interface GUIDs and CLSIDs come from the SDK's
