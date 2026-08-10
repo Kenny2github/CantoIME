@@ -42,6 +42,7 @@ set(CANTO_SOURCES
     src/Dictionary.cpp
     src/CandidateWindow.cpp
     src/TextService.cpp
+    src/LangBarButton.cpp
     src/dllmain.cpp
 )
 

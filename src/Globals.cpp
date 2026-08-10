@@ -31,6 +31,12 @@ const GUID GUID_Profile =
     { 0x2CB45F66, 0x00A5, 0x418C, { 0x83, 0x54, 0x87, 0xAC, 0x7B, 0x7C, 0x8C, 0x85 } };
 #endif
 
+// Shared across variants (the language-bar item is keyed by the per-variant
+// clsidService as well).
+// {6252B049-21DE-4270-B3F9-70CA49BF7AFE}
+const GUID GUID_CantoMainButton =
+    { 0x6252B049, 0x21DE, 0x4270, { 0xB3, 0xF9, 0x70, 0xCA, 0x49, 0xBF, 0x7A, 0xFE } };
+
 HINSTANCE g_hInst = nullptr;
 LONG      g_cRefDll = 0;
 

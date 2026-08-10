@@ -25,6 +25,7 @@
 
 #include "TextService.h"
 #include "EditSession.h"
+#include "LangBarButton.h"
 
 #include <msctf.h>
 #include <ctffunc.h>   // ITfContextView / display helpers live in msctf; kept for completeness
@@ -156,6 +157,9 @@ STDMETHODIMP CTextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD 
         OnCandidateClicked(globalIndex);
     });
 
+    // Add the language-bar buttons (main 粵 icon + 中/英 input-mode toggle).
+    AddLangBarButtons();
+
     return S_OK;
 
 fail:
@@ -166,6 +170,7 @@ fail:
 STDMETHODIMP CTextService::Deactivate()
 {
     // Ensure any in-flight composition is torn down and UI hidden.
+    RemoveLangBarButtons();
     RemoveWheelHook();
     ClearContext();
     m_candWnd.Hide();
@@ -191,6 +196,82 @@ STDMETHODIMP CTextService::Deactivate()
     m_tid = TF_CLIENTID_NULL;
 
     return S_OK;
+}
+
+// ---------------------------------------------------------------------------
+// Language-bar items + input mode
+// ---------------------------------------------------------------------------
+
+void CTextService::AddLangBarButtons()
+{
+    if (!m_pThreadMgr || m_pMainButton || m_pModeButton)
+        return;
+
+    ITfLangBarItemMgr* pMgr = nullptr;
+    if (FAILED(m_pThreadMgr->QueryInterface(IID_ITfLangBarItemMgr,
+                                            reinterpret_cast<void**>(&pMgr))))
+        return;
+
+    // Main input-method button: the input-indicator glyph (粵). Static.
+    m_pMainButton = new (std::nothrow) CLangBarButton(
+        CLSID_CantoIME, GUID_CantoMainButton,
+        TF_LBI_STYLE_BTN_BUTTON | TF_LBI_STYLE_SHOWNINTRAY, 0, L"CantoIME");
+    if (m_pMainButton)
+    {
+        m_pMainButton->SetGlyph([] { return std::wstring(L"粵"); }); // Yue (Cantonese)
+        pMgr->AddItem(m_pMainButton);
+    }
+
+    // Input-mode button: 中 / 英, click toggles. GUID_LBI_INPUTMODE marks it as
+    // the standard conversion-mode indicator.
+    m_pModeButton = new (std::nothrow) CLangBarButton(
+        CLSID_CantoIME, GUID_LBI_INPUTMODE,
+        TF_LBI_STYLE_BTN_BUTTON | TF_LBI_STYLE_SHOWNINTRAY, 1, L"Chinese / English");
+    if (m_pModeButton)
+    {
+        m_pModeButton->SetGlyph([this] {
+            return std::wstring(m_chineseMode ? L"中" : L"英"); // 中 / 英
+        });
+        m_pModeButton->SetOnClick([this] { ToggleInputMode(); });
+        pMgr->AddItem(m_pModeButton);
+    }
+
+    pMgr->Release();
+}
+
+void CTextService::RemoveLangBarButtons()
+{
+    ITfLangBarItemMgr* pMgr = nullptr;
+    if (m_pThreadMgr &&
+        SUCCEEDED(m_pThreadMgr->QueryInterface(IID_ITfLangBarItemMgr,
+                                               reinterpret_cast<void**>(&pMgr))))
+    {
+        if (m_pMainButton) pMgr->RemoveItem(m_pMainButton);
+        if (m_pModeButton) pMgr->RemoveItem(m_pModeButton);
+        pMgr->Release();
+    }
+
+    if (m_pMainButton) { m_pMainButton->Release(); m_pMainButton = nullptr; }
+    if (m_pModeButton) { m_pModeButton->Release(); m_pModeButton = nullptr; }
+}
+
+// Flips between Chinese and English input. Any in-flight composition is
+// committed first (as pressing Shift does in Bopomofo), then the input-mode
+// button refreshes its 中/英 glyph.
+void CTextService::ToggleInputMode()
+{
+    if (IsComposing() && m_pContext)
+    {
+        if (!m_candidates.empty())
+            CommitCandidate(m_pContext, m_sel);
+        else
+            CommitRaw(m_pContext);
+    }
+
+    m_chineseMode = !m_chineseMode;
+
+    if (m_pModeButton)
+        m_pModeButton->Update();
 }
 
 // ---------------------------------------------------------------------------
@@ -326,8 +407,16 @@ STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* /*pic*/, WPARAM wParam, LPA
         return E_INVALIDARG;
     *pfEaten = FALSE;
 
+    // Track a lone Shift for the input-mode toggle: Shift arms it; any other key
+    // disarms it (so Shift + letter still types normally, no toggle).
+    m_shiftArmed = (wParam == VK_SHIFT);
+
     if (CtrlOrAltDown())
         return S_OK; // never intercept shortcuts
+
+    // English mode: intercept nothing; letters pass straight through.
+    if (!m_chineseMode)
+        return S_OK;
 
     if (IsComposing())
     {
@@ -360,6 +449,10 @@ STDMETHODIMP CTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM /*lP
     *pfEaten = FALSE;
 
     if (CtrlOrAltDown())
+        return S_OK;
+
+    // English mode: never consume keys (mirrors OnTestKeyDown).
+    if (!m_chineseMode)
         return S_OK;
 
     if (!IsComposing())
@@ -468,9 +561,18 @@ STDMETHODIMP CTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM /*lP
     return S_OK;
 }
 
-STDMETHODIMP CTextService::OnTestKeyUp(ITfContext*, WPARAM, LPARAM, BOOL* pfEaten)
+STDMETHODIMP CTextService::OnTestKeyUp(ITfContext*, WPARAM wParam, LPARAM, BOOL* pfEaten)
 {
     if (pfEaten) *pfEaten = FALSE;
+
+    // A lone Shift press+release toggles Chinese/English. The key-up is reported
+    // for every key, so we act here and leave the key un-eaten so Shift still
+    // works normally for the app.
+    if (wParam == VK_SHIFT && m_shiftArmed)
+    {
+        m_shiftArmed = false;
+        ToggleInputMode();
+    }
     return S_OK;
 }
 
