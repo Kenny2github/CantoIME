@@ -473,23 +473,59 @@ STDMETHODIMP CTextService::OnCompositionTerminated(TfEditCookie /*ec*/, ITfCompo
 static const size_t kMaxCandidates = 300;
 static const size_t kMaxPrefixKeys = 200;
 
-// Builds m_candidates from m_pinyin using greedy phrase segmentation:
-//   * Lock complete leading syllables (each an exact dictionary key), choosing
-//     each syllable's best (first) character.
-//   * Prefix-match the final, still-open syllable. For every key that begins
-//     with it, emit one candidate per character: display = locked chars + char
-//     + the key's leftover romanization; commit = locked chars + char.
+// Builds m_candidates from m_pinyin in two priority tiers:
+//   1. Whole-buffer prefix match: every actual dictionary key the entire buffer
+//      is a prefix of. A real multi-syllable entry outranks any segmentation of
+//      shorter keys, e.g. "hah" surfaces 哈哈 (from key "haha") before 下下 (a
+//      doubling of "ha").
+//   2. Greedy segmentation: lock complete leading syllables (each an exact key,
+//      best character), then prefix-match the final open syllable. This covers
+//      inputs the dictionary has no whole-buffer key for, e.g. "gaogaod" locks
+//      高高 (gao, gao) then prefix-matches "d" -> "de" giving 高高的e.
 //
-// Example: "gaogaod" locks 高高 (gao, gao), then prefix-matches "d" -> "de"
-// giving display "高高的e", commit "高高的". "gagad" locks nothing ("ga" is not
-// an exact key) and "gagad" prefix-matches no key, so no candidates appear.
+// A candidate emits one entry per character of each matched key, displayed as
+// <locked chars><char><leftover romanization> and committed as <locked chars>
+// <char>. Both tiers feed one dedup set keyed on the commit string: keys arrive
+// in ascending order, so the first time a given Chinese text appears it carries
+// the lexicographically smallest remainder, and later duplicates are dropped.
+// "gagad" locks nothing and prefix-matches no key, so no candidates appear.
 void CTextService::BuildCandidates()
 {
     m_candidates.clear();
     if (m_pinyin.empty())
         return;
 
-    // ---- Lock complete leading syllables, leaving the final one open. ----
+    std::unordered_set<std::wstring> seenCommits;
+
+    // Emits candidates for one (locked prefix, open final syllable) split.
+    // Returns false once the candidate cap is reached so callers stop early.
+    auto emit = [&](const std::wstring& locked, const std::wstring& finalSyl) -> bool
+    {
+        std::vector<std::wstring> keys = m_dict.KeysWithPrefix(finalSyl, kMaxPrefixKeys);
+        for (const std::wstring& key : keys)
+        {
+            std::wstring remainder = key.substr(finalSyl.size()); // "" for exact match
+            for (const std::wstring& ch : m_dict.Lookup(key))
+            {
+                std::wstring commit = locked + ch;
+                if (!seenCommits.insert(commit).second)
+                    continue; // already emitted this text with an earlier remainder
+                Candidate c;
+                c.display = commit + remainder;
+                c.commit  = std::move(commit);
+                m_candidates.push_back(std::move(c));
+                if (m_candidates.size() >= kMaxCandidates)
+                    return false;
+            }
+        }
+        return true;
+    };
+
+    // ---- Tier 1: the whole buffer as a prefix of real dictionary keys. ----
+    if (!emit(std::wstring(), m_pinyin))
+        return;
+
+    // ---- Tier 2: greedy segmentation, locking complete leading syllables. ----
     std::wstring locked;   // committed Chinese for the fixed leading syllables
     size_t i = 0;
     while (i < m_pinyin.size())
@@ -507,32 +543,13 @@ void CTextService::BuildCandidates()
         i += len;
     }
 
-    std::wstring finalSyl = m_pinyin.substr(i);
-    if (finalSyl.empty())
-        return;
-
-    // ---- Prefix-match the final syllable. ----
-    // Keys arrive in ascending order, so the first time a given commit string
-    // is produced it carries the lexicographically smallest remainder. Keep
-    // only that one: the same Chinese text must not repeat under different
-    // trailing romanizations.
-    std::vector<std::wstring> keys = m_dict.KeysWithPrefix(finalSyl, kMaxPrefixKeys);
-    std::unordered_set<std::wstring> seenCommits;
-    for (const std::wstring& key : keys)
+    // With nothing locked, tier 2 would repeat tier 1's whole-buffer match, so
+    // only run it when leading syllables were actually locked off.
+    if (!locked.empty())
     {
-        std::wstring remainder = key.substr(finalSyl.size()); // "" for exact match
-        for (const std::wstring& ch : m_dict.Lookup(key))
-        {
-            std::wstring commit = locked + ch;
-            if (!seenCommits.insert(commit).second)
-                continue; // already emitted this text with an earlier remainder
-            Candidate c;
-            c.display = commit + remainder;
-            c.commit  = std::move(commit);
-            m_candidates.push_back(std::move(c));
-            if (m_candidates.size() >= kMaxCandidates)
-                return;
-        }
+        std::wstring finalSyl = m_pinyin.substr(i);
+        if (!finalSyl.empty())
+            emit(locked, finalSyl);
     }
 }
 
