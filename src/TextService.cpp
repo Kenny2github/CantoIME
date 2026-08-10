@@ -30,6 +30,8 @@
 #include <ctffunc.h>   // ITfContextView / display helpers live in msctf; kept for completeness
 #include <windowsx.h>  // GET_WHEEL_DELTA_WPARAM
 #include <unordered_set>
+#include <functional>
+#include <algorithm>
 
 // Statics backing the low-level mouse wheel hook.
 HHOOK         CTextService::s_wheelHook  = nullptr;
@@ -517,43 +519,47 @@ STDMETHODIMP CTextService::OnCompositionTerminated(TfEditCookie /*ec*/, ITfCompo
 static const size_t kMaxCandidates = 300;
 static const size_t kMaxPrefixKeys = 200;
 
-// Builds m_candidates from m_romanization in two priority tiers:
-//   1. Whole-buffer prefix match: every actual dictionary key the entire buffer
-//      is a prefix of. A real multi-syllable entry outranks any segmentation of
-//      shorter keys, e.g. "hah" surfaces 哈哈 (from key "haha") before 下下 (a
-//      doubling of "ha").
-//   2. Greedy segmentation: lock complete leading syllables (each an exact key,
-//      best character), then prefix-match the final open syllable. This covers
-//      inputs the dictionary has no whole-buffer key for, e.g. "gaogaod" locks
-//      高高 (gao, gao) then prefix-matches "d" -> "de" giving 高高的e.
+// Builds m_candidates from m_romanization, prioritizing segmentations that use
+// FEWER dictionary keys.
 //
-// A candidate emits one entry per character of each matched key, displayed as
-// <locked chars><char><leftover romanization> and committed as <locked chars>
-// <char>. Both tiers feed one dedup set keyed on the commit string: keys arrive
-// in ascending order, so the first time a given Chinese text appears it carries
-// the lexicographically smallest remainder, and later duplicates are dropped.
-// "gagad" locks nothing and prefix-matches no key, so no candidates appear.
+// The buffer is split into a run of leading exact keys (each locked to its best
+// character) followed by a non-empty final segment that is prefix-matched. Every
+// such split is enumerated; a split using k leading keys yields (k + 1)-key
+// candidates. Splits are processed in ascending key count, so for "abcdefg" with
+// keys abc/def/g/abcd/efg the 2-key "abcd efg" is emitted before the 3-key
+// "abc def g". The 0-leading-key split (whole buffer prefix-matched) is the 1-key
+// tier, so a real single key still outranks any multi-key segmentation, e.g.
+// "hah" surfaces 哈哈 (key "haha") before 下下 (a doubling of "ha").
+//
+// Each split emits one entry per character of each prefix-matched key, displayed
+// as <locked chars><char><leftover romanization> and committed as <locked chars>
+// <char>. All splits share one dedup set keyed on the commit string: the first
+// time a given Chinese text appears it does so via the fewest keys (and, within a
+// split, the lexicographically smallest remainder), and later duplicates drop.
 void CTextService::BuildCandidates()
 {
     m_candidates.clear();
     if (m_romanization.empty())
         return;
 
+    const std::wstring& buf = m_romanization;
+    const size_t n = buf.size();
+
     std::unordered_set<std::wstring> seenCommits;
 
-    // Emits candidates for one (locked prefix, open final syllable) split.
+    // Emits candidates for one (locked prefix, open final segment) split.
     // Returns false once the candidate cap is reached so callers stop early.
-    auto emit = [&](const std::wstring& locked, const std::wstring& finalSyl) -> bool
+    auto emit = [&](const std::wstring& locked, const std::wstring& finalSeg) -> bool
     {
-        std::vector<std::wstring> keys = m_dict.KeysWithPrefix(finalSyl, kMaxPrefixKeys);
+        std::vector<std::wstring> keys = m_dict.KeysWithPrefix(finalSeg, kMaxPrefixKeys);
         for (const std::wstring& key : keys)
         {
-            std::wstring remainder = key.substr(finalSyl.size()); // "" for exact match
+            std::wstring remainder = key.substr(finalSeg.size()); // "" for exact match
             for (const std::wstring& ch : m_dict.Lookup(key))
             {
                 std::wstring commit = locked + ch;
                 if (!seenCommits.insert(commit).second)
-                    continue; // already emitted this text with an earlier remainder
+                    continue; // already emitted this text with fewer/earlier keys
                 Candidate c;
                 c.display = commit + remainder;
                 c.commit  = std::move(commit);
@@ -565,36 +571,42 @@ void CTextService::BuildCandidates()
         return true;
     };
 
-    // ---- Tier 1: the whole buffer as a prefix of real dictionary keys. ----
-    if (!emit(std::wstring(), m_romanization))
-        return;
+    // ---- Enumerate every leading split: partition a prefix [0, consumed) of the
+    // buffer into `segs` leading exact keys (locked to their best character),
+    // leaving a non-empty final segment [consumed, n) to prefix-match. ----
+    struct Split { std::wstring locked; size_t consumed; size_t segs; };
+    std::vector<Split> splits;
+    const size_t kMaxSplits = 256; // safety valve against pathological fan-out
 
-    // ---- Tier 2: greedy segmentation, locking complete leading syllables. ----
-    std::wstring locked;   // committed Chinese for the fixed leading syllables
-    size_t i = 0;
-    while (i < m_romanization.size())
+    std::function<void(size_t, size_t, const std::wstring&)> gather =
+        [&](size_t pos, size_t segs, const std::wstring& locked)
     {
-        size_t len = m_dict.LongestExactPrefixLen(m_romanization, i);
-        // Never lock the trailing syllable: it must stay open for prefix
-        // matching (a fully typed final syllable is still a prefix of itself).
-        if (len == 0 || i + len >= m_romanization.size())
-            break;
+        if (splits.size() >= kMaxSplits)
+            return;
+        splits.push_back({ locked, pos, segs }); // pos < n (final segment non-empty)
 
-        const auto& chars = m_dict.Lookup(m_romanization.substr(i, len));
-        if (chars.empty())
-            break; // shouldn't happen (len came from an exact key), but be safe
-        locked += chars.front();
-        i += len;
-    }
+        // Extend by one more leading exact key, keeping the final segment
+        // non-empty (pos + len < n). Lengths are bounded by the longest exact
+        // key at this position.
+        size_t maxLen = m_dict.LongestExactPrefixLen(buf, pos);
+        for (size_t len = 1; len <= maxLen && pos + len < n; ++len)
+        {
+            std::wstring key = buf.substr(pos, len);
+            const auto& chars = m_dict.Lookup(key);
+            if (chars.empty())
+                continue; // not an exact key at this length
+            gather(pos + len, segs + 1, locked + chars.front());
+        }
+    };
+    gather(0, 0, std::wstring());
 
-    // With nothing locked, tier 2 would repeat tier 1's whole-buffer match, so
-    // only run it when leading syllables were actually locked off.
-    if (!locked.empty())
-    {
-        std::wstring finalSyl = m_romanization.substr(i);
-        if (!finalSyl.empty())
-            emit(locked, finalSyl);
-    }
+    // Fewest keys first. stable_sort keeps discovery order within a key count.
+    std::stable_sort(splits.begin(), splits.end(),
+                     [](const Split& a, const Split& b) { return a.segs < b.segs; });
+
+    for (const Split& s : splits)
+        if (!emit(s.locked, buf.substr(s.consumed)))
+            return;
 }
 
 void CTextService::UpdateCandidates(ITfContext* pic)
