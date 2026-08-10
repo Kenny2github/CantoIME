@@ -15,8 +15,63 @@
 
 #include <msctf.h>
 #include <olectl.h>
+#include <shlobj.h>
 #include <new>
 #include <string>
+#include <cstdio>
+
+// ---------------------------------------------------------------------------
+// Registration diagnostic log
+//
+// regsvr32 only surfaces the top-level HRESULT (e.g. 0x80040201) and doesn't
+// say which registration step failed. This appends every step + its HRESULT
+// to %TEMP%\MinimalPinyinIME_reg.log so failures are debuggable from a bare
+// Windows VM without a debugger attached.
+// ---------------------------------------------------------------------------
+static void RegLog(const wchar_t* fmt, ...)
+{
+    wchar_t path[MAX_PATH] = { 0 };
+    if (GetTempPathW(MAX_PATH, path) == 0)
+        return;
+    if (wcslen(path) + 32 >= MAX_PATH)
+        return;
+    wcscat_s(path, MAX_PATH, L"MinimalPinyinIME_reg.log");
+
+    FILE* fp = nullptr;
+    if (_wfopen_s(&fp, path, L"a, ccs=UTF-8") != 0 || fp == nullptr)
+        return;
+
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    fwprintf(fp, L"[%04u-%02u-%02u %02u:%02u:%02u.%03u] ",
+             st.wYear, st.wMonth, st.wDay,
+             st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+
+    va_list ap;
+    va_start(ap, fmt);
+    vfwprintf(fp, fmt, ap);
+    va_end(ap);
+
+    fputwc(L'\n', fp);
+    fclose(fp);
+
+    // Also mirror to the debugger for live capture in DebugView.
+    OutputDebugStringW(L"[MPIME] see %TEMP%\\MinimalPinyinIME_reg.log\n");
+}
+
+static bool IsProcessElevated()
+{
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+        return false;
+    TOKEN_ELEVATION te = { 0 };
+    DWORD ret = 0;
+    bool elevated = false;
+    if (GetTokenInformation(token, TokenElevation, &te, sizeof(te), &ret))
+        elevated = (te.TokenIsElevated != 0);
+    CloseHandle(token);
+    return elevated;
+}
 
 // ---------------------------------------------------------------------------
 // Class factory
@@ -197,10 +252,13 @@ static HRESULT RegisterProfile()
         return hr;
 
     hr = pProfiles->Register(CLSID_MinimalPinyinIME);
+    RegLog(L"  ITfInputProcessorProfiles::Register hr=0x%08X", hr);
     if (SUCCEEDED(hr))
     {
         wchar_t module[MAX_PATH] = { 0 };
         GetModuleFileNameW(g_hInst, module, MAX_PATH);
+        RegLog(L"  module path = %s", module);
+        RegLog(L"  LANGID = 0x%04X, desc = %s", (unsigned)TEXTSERVICE_LANGID, TEXTSERVICE_DESC);
 
         hr = pProfiles->AddLanguageProfile(
             CLSID_MinimalPinyinIME,
@@ -211,6 +269,7 @@ static HRESULT RegisterProfile()
             module,                        // icon file (the DLL)
             static_cast<ULONG>(wcslen(module)),
             TEXTSERVICE_ICON_INDEX);
+        RegLog(L"  ITfInputProcessorProfiles::AddLanguageProfile hr=0x%08X", hr);
     }
 
     pProfiles->Release();
@@ -243,19 +302,26 @@ static HRESULT RegisterCategories()
     hr = pCategoryMgr->RegisterCategory(CLSID_MinimalPinyinIME,
                                         GUID_TFCAT_TIP_KEYBOARD,
                                         CLSID_MinimalPinyinIME);
+    RegLog(L"  RegisterCategory(TIP_KEYBOARD) hr=0x%08X", hr);
 
     // Windows 8+/10/11: declare immersive (UWP / packaged app) support so the
     // IME is usable in modern apps.
     if (SUCCEEDED(hr))
+    {
         hr = pCategoryMgr->RegisterCategory(CLSID_MinimalPinyinIME,
                                             GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT,
                                             CLSID_MinimalPinyinIME);
+        RegLog(L"  RegisterCategory(IMMERSIVESUPPORT) hr=0x%08X", hr);
+    }
 
     // Declare systray support so the IME appears in the input indicator.
     if (SUCCEEDED(hr))
+    {
         hr = pCategoryMgr->RegisterCategory(CLSID_MinimalPinyinIME,
                                             GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT,
                                             CLSID_MinimalPinyinIME);
+        RegLog(L"  RegisterCategory(SYSTRAYSUPPORT) hr=0x%08X", hr);
+    }
 
     pCategoryMgr->Release();
     return hr;
@@ -288,20 +354,20 @@ STDAPI DllRegisterServer()
     HRESULT hrCo = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     bool coInited = SUCCEEDED(hrCo);
 
+    RegLog(L"---- DllRegisterServer begin (elevated=%s, CoInit hr=0x%08X) ----",
+           IsProcessElevated() ? L"yes" : L"NO", hrCo);
+
     HRESULT hr = RegisterInprocServer();
-    if (FAILED(hr))
-        OutputDebugStringW(L"[MPIME] RegisterInprocServer failed\n");
+    RegLog(L"RegisterInprocServer hr=0x%08X", hr);
     if (SUCCEEDED(hr))
     {
         hr = RegisterProfile();
-        if (FAILED(hr))
-            OutputDebugStringW(L"[MPIME] RegisterProfile failed\n");
+        RegLog(L"RegisterProfile overall hr=0x%08X", hr);
     }
     if (SUCCEEDED(hr))
     {
         hr = RegisterCategories();
-        if (FAILED(hr))
-            OutputDebugStringW(L"[MPIME] RegisterCategories failed\n");
+        RegLog(L"RegisterCategories overall hr=0x%08X", hr);
     }
 
     if (FAILED(hr))
@@ -314,6 +380,8 @@ STDAPI DllRegisterServer()
 
     if (coInited)
         CoUninitialize();
+
+    RegLog(L"---- DllRegisterServer end hr=0x%08X ----", hr);
 
     // Return the actual failing HRESULT (not a blanket SELFREG_E_CLASS) so the
     // real cause is visible to regsvr32 / the CI registration smoke test.
