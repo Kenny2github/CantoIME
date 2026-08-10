@@ -43,7 +43,10 @@ set(CANTO_SOURCES
     src/CandidateWindow.cpp
     src/TextService.cpp
     src/LangBarButton.cpp
+    src/Settings.cpp
+    src/OptionsDialog.cpp
     src/dllmain.cpp
+    src/CantoIME.rc          # "Keyboard options" dialog resource (not the icon)
 )
 
 # Generate the 粵 profile icon (what the language indicator shows) at build time
@@ -76,6 +79,9 @@ function(add_canto_variant tag)
         PREFIX ""
     )
 
+    # So CantoIME.rc resolves resource.h (CMake passes this to rc as /I).
+    target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+
     # Unicode + lean Windows headers + this DLL's variant selector.
     target_compile_definitions(${target} PRIVATE
         UNICODE
@@ -103,18 +109,25 @@ function(add_canto_variant tag)
         advapi32
         uuid
         shell32   # SHGetFolderPath / SHGFP
+        comdlg32  # GetOpenFileName (options dialog "Browse")
         imm32     # occasionally needed by TSF-adjacent code paths
     )
 
-    # Copy the sample dictionary next to the built DLL for convenient local
-    # testing. All variants read the same dictionary.
+    # Copy the stock dictionaries next to the built DLL. traditional.txt is the
+    # default the IME reads; simplified.txt ships for the Simplified variants.
+    # This also makes local testing work without the installer.
     add_custom_command(TARGET ${target} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_CURRENT_SOURCE_DIR}/dictionary.txt"
-            "$<TARGET_FILE_DIR:${target}>/dictionary.txt"
+            "${CMAKE_CURRENT_SOURCE_DIR}/traditional.txt"
+            "$<TARGET_FILE_DIR:${target}>/traditional.txt"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/simplified.txt"
+            "$<TARGET_FILE_DIR:${target}>/simplified.txt"
     )
 endfunction()
 
-add_canto_variant(HK)  # Hong Kong SAR (default)
-add_canto_variant(TW)  # Taiwan
-add_canto_variant(MO)  # Macao SAR
+add_canto_variant(HK)  # Hong Kong SAR   (Traditional, default)
+add_canto_variant(TW)  # Taiwan          (Traditional)
+add_canto_variant(MO)  # Macao SAR       (Traditional)
+add_canto_variant(CN)  # China           (Simplified)
+add_canto_variant(SG)  # Singapore       (Simplified)

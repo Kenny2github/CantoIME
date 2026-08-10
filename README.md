@@ -3,24 +3,25 @@
 A minimal, buildable Windows 11 **TSF (Text Services Framework)** text service
 that behaves like Microsoft Bopomofo, but with a **customizable romanization ->
 character dictionary loaded at runtime** from a plain text file. It is an in-proc
-COM DLL that registers as a Traditional Chinese input method.
+COM DLL that registers as a Chinese input method.
 
-CantoIME ships **one DLL per Traditional Chinese variant Windows offers**, so
-you can enable it under whichever locale(s) you use:
+CantoIME ships **one DLL per Chinese variant Windows offers**, so you can enable
+it under whichever locale(s) you use:
 
 | DLL | Windows locale | LANGID |
 | --- | --- | --- |
 | `CantoIME-HK.dll` | Chinese (Traditional, Hong Kong SAR) | `0x0C04` |
 | `CantoIME-TW.dll` | Chinese (Traditional, Taiwan) | `0x0404` |
 | `CantoIME-MO.dll` | Chinese (Traditional, Macao SAR) | `0x1404` |
+| `CantoIME-CN.dll` | Chinese (Simplified, China) | `0x0804` |
+| `CantoIME-SG.dll` | Chinese (Simplified, Singapore) | `0x1004` |
 
-The three are built from the same source; each is compiled with a
-`CANTO_VARIANT_*` define that selects its LANGID, description, CLSID, profile
-GUID, and window class, and each registers as an independent input method so
-they can be registered independently. Because all three share one dictionary,
-the installer treats them as mutually exclusive: you pick **one** variant to
-install, with **Hong Kong SAR** as the default. (You can still register the
-other DLLs by hand if you want more than one.)
+They are built from the same source; each is compiled with a `CANTO_VARIANT_*`
+define that selects its LANGID, CLSID, profile GUID, and window class, and each
+registers as an independent input method. The installer builds its variant list
+from the Chinese languages you have installed and lets you pick **one** (Hong
+Kong SAR is the default when present). (You can still register the other DLLs by
+hand if you want more than one.)
 
 ---
 
@@ -81,8 +82,8 @@ rendered un-inverted).
 
 ## Dictionary (runtime customizable)
 
-`dictionary.txt` is plain **UTF-8** (a leading BOM is tolerated). One entry per
-line:
+The stock dictionaries `traditional.txt` and `simplified.txt` are plain **UTF-8**
+(a leading BOM is tolerated). One entry per line:
 
 ```
 romanization<TAB or spaces>char1 char2 char3 ...
@@ -103,22 +104,29 @@ has entries for `abc`, `def`, `g`, `abcd`, and `efg`, typing `abcdefg` lists
 it uses fewer keys. (The whole-buffer prefix match consumes the most with its
 first key, so a real single key spanning the buffer still ranks first.)
 
-### Dictionary search order (documented)
+The stock dictionaries `traditional.txt` and `simplified.txt` live next to the
+DLL; no `%APPDATA%` and no registry path search are used.
 
-The DLL resolves the dictionary path at activation time, in this order:
+### Options ("Keyboard options" dialog)
 
-1. **Registry override** — REG_SZ value
-   `Software\CantoIME\DictionaryPath`, checked first under **HKCU**,
-   then **HKLM**. (The installer writes the HKLM value.)
-2. **`dictionary.txt` next to the DLL.**
-3. **`%APPDATA%\CantoIME\dictionary.txt`.**
+Open **Settings → Time & language → Language & region → (your Chinese variant) →
+Keyboards → CantoIME → ⋯ → Keyboard options**. The dialog (the IME's own window)
+edits two per-user settings, stored in `HKCU\Software\CantoIME`:
 
-The first existing file wins. If none exist, no candidates are produced (typing
+- **Dictionary** — a dropdown that is the *sole* selector for which dictionary is
+  read: *Stock Traditional Chinese dictionary* (`traditional.txt`), *Stock
+  Simplified Chinese dictionary* (`simplified.txt`), or *Custom* (Browse for your
+  own file). The default follows the variant's script: Traditional (HK/TW/MO)
+  defaults to `traditional.txt`, Simplified (CN/SG) to `simplified.txt`.
+- **Candidate font size** — the candidate window font height; the window width
+  grows with it. Default 18 px.
+
+Changes apply the next time CantoIME gains focus (re-select it or click into a
+text box). If the selected file is missing, no candidates are produced (typing
 still works; Enter commits the raw romanization).
 
-To customize at runtime: edit the file the registry points at (or drop your own
-`dictionary.txt` next to the DLL), then re-select the IME (or sign out/in) so it
-reloads on the next activation.
+(The Chinese/English mode toggle is a separate, always-on feature: a lone Shift
+tap or the 中/英 language-bar button, documented above.)
 
 ---
 
@@ -126,22 +134,28 @@ reloads on the next activation.
 
 ```
 CantoIME/
-├── CMakeLists.txt          # builds CantoIME-HK/-TW/-MO.dll (x64, C++17, Unicode)
+├── CMakeLists.txt          # builds CantoIME-HK/-TW/-MO/-CN/-SG.dll (x64, C++17)
 ├── exports.def             # exports the 4 COM entry points
-├── dictionary.txt          # sample dictionary (~35 syllables)
+├── traditional.txt         # stock Traditional dictionary (installed next to the DLL)
+├── simplified.txt          # stock Simplified dictionary (installed next to the DLL)
 ├── LICENSE                 # MIT
 ├── README.md
 ├── installer/
 │   └── setup.iss           # Inno Setup script -> CantoIME-Setup.exe
+├── tools/
+│   └── make-canto-icon.ps1 # generates the 粵 indicator icon (.res) at build time
 └── src/
-    ├── Globals.h/.cpp      # CLSID/GUIDs, LANGID, hInst, DLL refcount, path logic
-    ├── dllmain.cpp         # DllMain, class factory, DllGetClassObject,
-    │                       #   DllCanUnloadNow, DllRegister/UnregisterServer
-    ├── TextService.h/.cpp  # ITfTextInputProcessorEx + key/thread/composition sinks
+    ├── Globals.h/.cpp      # CLSID/GUIDs, LANGID, hInst, DLL refcount, dict resolution
+    ├── dllmain.cpp         # DllMain, class factory, DllRegister/UnregisterServer
+    ├── TextService.h/.cpp  # TIP sinks + ITfFnConfigure (options dialog)
     ├── EditSession.h       # reusable ITfEditSession adapter (lambda callback)
-    ├── CandidateWindow.h/.cpp  # owner-drawn GDI popup, CJK font
+    ├── CandidateWindow.h/.cpp  # owner-drawn GDI popup, sizable CJK font
     ├── LangBarButton.h/.cpp    # language-bar buttons (粵 icon, 中/英 mode toggle)
-    └── Dictionary.h/.cpp   # UTF-8 loader + lookup + reload
+    ├── Dictionary.h/.cpp   # UTF-8 loader + lookup + reload
+    ├── Settings.h/.cpp     # per-user options in HKCU\Software\CantoIME
+    ├── OptionsDialog.h/.cpp # "Keyboard options" dialog (ITfFnConfigure::Show)
+    ├── resource.h          # dialog/control IDs
+    └── CantoIME.rc         # options dialog resource (icon is a separate .res)
 ```
 
 ---
@@ -175,8 +189,8 @@ cmake -B build -A x64
 cmake --build build --config Release
 ```
 
-This produces all three variant DLLs (`build\Release\CantoIME-HK.dll`,
-`CantoIME-TW.dll`, `CantoIME-MO.dll`) and copies `dictionary.txt` next to them.
+This produces all five variant DLLs (`build\Release\CantoIME-HK/-TW/-MO/-CN/-SG.dll`)
+and copies `traditional.txt` + `simplified.txt` next to them.
 
 #### Alternative: build directly with `cl`
 
@@ -184,16 +198,21 @@ From the x64 Native Tools prompt, in the repo root. Pick the variant with the
 matching `CANTO_VARIANT_*` define and output name (here: Hong Kong SAR):
 
 ```
+rc /nologo /fo CantoIME.res src\CantoIME.rc
 cl /nologo /LD /EHsc /std:c++17 /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN ^
    /DCANTO_VARIANT_HK ^
    src\Globals.cpp src\Dictionary.cpp src\CandidateWindow.cpp ^
-   src\TextService.cpp src\dllmain.cpp ^
+   src\TextService.cpp src\LangBarButton.cpp src\Settings.cpp ^
+   src\OptionsDialog.cpp src\dllmain.cpp CantoIME.res ^
    /link /DEF:exports.def /OUT:CantoIME-HK.dll ^
-   user32.lib gdi32.lib ole32.lib oleaut32.lib advapi32.lib uuid.lib shell32.lib imm32.lib
+   user32.lib gdi32.lib ole32.lib oleaut32.lib advapi32.lib uuid.lib ^
+   shell32.lib comdlg32.lib imm32.lib
 ```
 
-Repeat with `/DCANTO_VARIANT_TW` / `/OUT:CantoIME-TW.dll` and
-`/DCANTO_VARIANT_MO` / `/OUT:CantoIME-MO.dll` for the other variants.
+Repeat with `/DCANTO_VARIANT_TW`, `/DCANTO_VARIANT_MO`, `/DCANTO_VARIANT_CN`, and
+`/DCANTO_VARIANT_SG` (with matching `/OUT:`). This `cl` path omits the 粵 indicator
+icon (a separate generated `.res`, see `tools/make-canto-icon.ps1`); the CMake
+build links it in. The DLL is fully functional without it.
 
 ### 3. Build the installer (optional)
 
@@ -201,18 +220,19 @@ Repeat with `/DCANTO_VARIANT_TW` / `/OUT:CantoIME-TW.dll` and
 iscc installer\setup.iss
 ```
 
-Produces `installer\Output\CantoIME-Setup.exe`. (The script expects the DLLs at
-`build\Release\CantoIME-*.dll`; adjust the `[Files]` source paths if you built
-elsewhere.) The wizard shows the three variants as a radio group (mutually
-exclusive, since they share one dictionary), with **Hong Kong SAR** selected by
-default.
+Produces `installer\Output\CantoIME-Setup.exe`. (The script expects all five DLLs
+at `build\Release\CantoIME-*.dll`; adjust the `[Files]` source paths if you built
+elsewhere.) The wizard builds its variant list from the Chinese languages you have
+installed and lets you pick **one** (Hong Kong SAR is the default when present);
+if you have no Chinese language, it shows an "add a language first" page instead.
 
 ### 4. Install (as administrator)
 
-Run `CantoIME-Setup.exe`. Choose which variant to install, then it installs that
-DLL + the shared dictionary to `C:\Program Files\CantoIME\`, writes the registry
-`DictionaryPath` value, and registers the chosen variant with
-64-bit `regsvr32 /s`.
+Add the matching Chinese language in Windows **first** (the installer requires
+it). Run `CantoIME-Setup.exe`, choose the variant, and it installs that DLL +
+`traditional.txt` / `simplified.txt` to `C:\Program Files\CantoIME\` and registers
+the chosen variant with 64-bit `regsvr32 /s`. Per-user options (dictionary choice,
+font size) are written to `HKCU\Software\CantoIME` later, by the options dialog.
 
 To register/unregister manually instead of using the installer, from an
 **elevated** prompt (use the DLL(s) for the variant(s) you want):
@@ -250,13 +270,14 @@ cleanly.
 4. Type in any edit control (Notepad, WordPad, the search box) to see the
    composition + candidate window.
 
-### 6. Customize the dictionary at runtime
+### 6. Customize at runtime
 
-Edit the installed `dictionary.txt` (its path is the registry value
-`HKLM\Software\CantoIME\DictionaryPath`, i.e.
-`C:\Program Files\CantoIME\dictionary.txt`). The file is re-read the
-next time the IME is activated, so re-select the IME (or sign out/in). You can
-also edit `dictionary.txt` in the repo before building/installing.
+Open **Keyboard options** (see [Options](#options-keyboard-options-dialog)) to
+choose the dictionary (Stock Traditional / Stock Simplified / Custom) and the
+candidate font size. Or edit the installed `traditional.txt` / `simplified.txt`
+in `C:\Program Files\CantoIME\` directly. Changes are re-read the next time
+CantoIME gains focus (re-select it or click into a text box). You can also edit
+the stock files in the repo before building/installing.
 
 ### Updating
 
@@ -317,9 +338,8 @@ Windows may ask you to restart to finish the update. Bump `MyAppVersion` in
 ## Installer note: WiX alternative
 
 Instead of Inno Setup you can package with **WiX Toolset**: author a `.wxs` that
-lays the DLL + `dictionary.txt` into a `ProgramFiles64Folder` component, writes
-the `HKLM\Software\CantoIME\DictionaryPath` registry value, and runs the
-DLL's self-registration. WiX can self-register via a `SelfReg` reference or,
+lays the DLL + `traditional.txt` / `simplified.txt` into a `ProgramFiles64Folder`
+component and runs the DLL's self-registration. WiX can self-register via a `SelfReg` reference or,
 better, by invoking 64-bit `regsvr32` from a deferred, elevated `CustomAction`
 sequenced on install/uninstall — mirroring the `[Run]`/`[UninstallRun]` steps in
 `installer/setup.iss`. WiX gives you an MSI (better for enterprise deployment)

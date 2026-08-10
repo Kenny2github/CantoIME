@@ -42,7 +42,10 @@ jobs:
           Copy-Item build\Release\CantoIME-HK.dll, `
                     build\Release\CantoIME-TW.dll, `
                     build\Release\CantoIME-MO.dll, `
-                    build\Release\dictionary.txt, `
+                    build\Release\CantoIME-CN.dll, `
+                    build\Release\CantoIME-SG.dll, `
+                    build\Release\traditional.txt, `
+                    build\Release\simplified.txt, `
                     installer\Output\CantoIME-Setup.exe dist\
 
       - name: Upload artifact

@@ -20,6 +20,7 @@
 #include "CandidateWindow.h"
 
 #include <msctf.h>
+#include <ctffunc.h>   // ITfFunctionProvider / ITfFunction / ITfFnConfigure
 #include <string>
 #include <vector>
 
@@ -29,7 +30,9 @@ class CTextService final :
     public ITfTextInputProcessorEx,
     public ITfThreadMgrEventSink,
     public ITfKeyEventSink,
-    public ITfCompositionSink
+    public ITfCompositionSink,
+    public ITfFunctionProvider,   // exposes the config function to Windows
+    public ITfFnConfigure          // the "Keyboard options" dialog entry point
 {
 public:
     CTextService();
@@ -61,6 +64,17 @@ public:
 
     // --- ITfCompositionSink -------------------------------------------------
     STDMETHODIMP OnCompositionTerminated(TfEditCookie ecWrite, ITfComposition* pComposition) override;
+
+    // --- ITfFunctionProvider ------------------------------------------------
+    STDMETHODIMP GetType(GUID* pguid) override;
+    STDMETHODIMP GetDescription(BSTR* pbstrDesc) override;
+    STDMETHODIMP GetFunction(REFGUID rguid, REFIID riid, IUnknown** ppunk) override;
+
+    // --- ITfFunction (base of ITfFnConfigure) -------------------------------
+    STDMETHODIMP GetDisplayName(BSTR* pbstrName) override;
+
+    // --- ITfFnConfigure -----------------------------------------------------
+    STDMETHODIMP Show(HWND hwndParent, LANGID langid, REFGUID rguidProfile) override;
 
     // ----- Called by the edit sessions (friends via public helpers) ---------
     // These run inside a granted edit cookie.
@@ -198,6 +212,12 @@ private:
 
     Dictionary      m_dict;
     CandidateWindow m_candWnd;
+
+    // Applies per-user settings (HKCU): candidate font size, and the dictionary
+    // (reloaded only if the resolved path changed). Called at activation and when
+    // the IME regains focus, so options-dialog changes take effect promptly.
+    void ApplySettings();
+    std::wstring m_dictPathLoaded; // resolved path of the currently-loaded dict
 
     // Active service for the low-level mouse hook (one composition at a time).
     static HHOOK          s_wheelHook;

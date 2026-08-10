@@ -1,27 +1,36 @@
 ; setup.iss  -  Inno Setup script for CantoIME
 ;
-; Builds CantoIME-Setup.exe which lets the user pick ONE of the Traditional
-; Chinese variants Windows offers (they share a dictionary, so only one is
-; installable at a time) and, for the chosen variant:
+; Builds CantoIME-Setup.exe. It offers ONE Chinese variant to install for (only
+; the languages the user has already added in Windows are listed), and for the
+; chosen variant:
 ;   * installs its DLL to {autopf}\CantoIME (64-bit),
+;   * installs the stock dictionaries (traditional.txt, simplified.txt) alongside,
 ;   * registers the TSF text service via 64-bit regsvr32 on install,
 ;   * unregisters it via regsvr32 /u on uninstall (before files are removed).
-; The shared dictionary and HKLM\Software\CantoIME\DictionaryPath are always
-; installed. "Chinese (Traditional, Hong Kong SAR)" is the default selection.
+;
+; Variants: HK/TW/MO (Traditional), CN/SG (Simplified). The variant list on the
+; selection page is built from the user's installed languages; if none is a
+; Chinese language, that page is replaced by an "add a language first" message
+; and installation is blocked. This avoids registering a TSF profile for a LANGID
+; the user does not have (which shows up as a broken, mis-languaged keyboard) and
+; is used instead of installing a language pack from Setup (that needs internet
+; and usually a reboot, and cannot be done reliably here).
+;
+; Options (dictionary choice, toggle key, candidate font size) live per-user in
+; HKCU\Software\CantoIME, edited via the IME's "Keyboard options" dialog and
+; removed on uninstall. No %APPDATA% is used.
+;
+; Note: registering a TSF text service writes to HKLM, so admin is required (this
+; is inherent to Windows IMEs; per-user/no-admin registration is not possible).
 ;
 ; Compile with:  iscc installer\setup.iss
 ; (Assumes the DLLs were already built to ..\build\Release\CantoIME-*.dll)
 
 #define MyAppName "CantoIME"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.0.0"
 #define MyAppPublisher "AbyxDev"
 
 [Setup]
-; In-place updates: the constant AppId makes Inno Setup recognize an existing
-; install and upgrade it in place (same install dir, files overwritten) when a
-; newer installer is run, with no need to uninstall first. Bump MyAppVersion for
-; each release so the upgrade is recorded. The in-use TSF DLL is handled by the
-; restartreplace flag on the [Files] entries below.
 AppId={{C1D2E3F4-A5B6-4C7D-8E9F-0A1B2C3D4E5F}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
@@ -35,58 +44,173 @@ SolidCompression=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
-; Don't try to force-close apps that have the IME loaded; rely on
-; restartreplace to swap a locked DLL on the next reboot instead.
-CloseApplications=no
 WizardStyle=modern
 
-[Tasks]
-; The three variants share one dictionary, so only one may be installed at a
-; time. The "exclusive" flag makes these a radio group; Hong Kong SAR is
-; checked by default, the others are unchecked.
-Name: "hk"; Description: "Chinese (Traditional, Hong Kong SAR)"; \
-    GroupDescription: "Install CantoIME for which Traditional Chinese variant:"; Flags: exclusive
-Name: "tw"; Description: "Chinese (Traditional, Taiwan)"; \
-    GroupDescription: "Install CantoIME for which Traditional Chinese variant:"; Flags: exclusive unchecked
-Name: "mo"; Description: "Chinese (Traditional, Macao SAR)"; \
-    GroupDescription: "Install CantoIME for which Traditional Chinese variant:"; Flags: exclusive unchecked
-
 [Files]
-; The DLL for the selected variant (only one task can be active). ignoreversion
-; forces overwrite on upgrade (the DLLs carry no version resource);
-; restartreplace + uninsrestartdelete queue the swap for the next reboot when
-; the DLL is loaded by a running process and so can't be replaced immediately.
-Source: "..\build\Release\CantoIME-HK.dll"; DestDir: "{app}"; Tasks: hk; Flags: ignoreversion 64bit restartreplace uninsrestartdelete
-Source: "..\build\Release\CantoIME-TW.dll"; DestDir: "{app}"; Tasks: tw; Flags: ignoreversion 64bit restartreplace uninsrestartdelete
-Source: "..\build\Release\CantoIME-MO.dll"; DestDir: "{app}"; Tasks: mo; Flags: ignoreversion 64bit restartreplace uninsrestartdelete
-; Shared, runtime-customizable dictionary (always installed).
-Source: "..\dictionary.txt"; DestDir: "{app}"; Flags: ignoreversion
+; The DLL for the selected variant (exactly one is chosen on the variant page).
+Source: "..\build\Release\CantoIME-HK.dll"; DestDir: "{app}"; Check: IsVariant('HK'); Flags: ignoreversion 64bit restartreplace uninsrestartdelete
+Source: "..\build\Release\CantoIME-TW.dll"; DestDir: "{app}"; Check: IsVariant('TW'); Flags: ignoreversion 64bit restartreplace uninsrestartdelete
+Source: "..\build\Release\CantoIME-MO.dll"; DestDir: "{app}"; Check: IsVariant('MO'); Flags: ignoreversion 64bit restartreplace uninsrestartdelete
+Source: "..\build\Release\CantoIME-CN.dll"; DestDir: "{app}"; Check: IsVariant('CN'); Flags: ignoreversion 64bit restartreplace uninsrestartdelete
+Source: "..\build\Release\CantoIME-SG.dll"; DestDir: "{app}"; Check: IsVariant('SG'); Flags: ignoreversion 64bit restartreplace uninsrestartdelete
+; Stock dictionaries live next to the DLL. traditional.txt is the default the IME
+; reads; simplified.txt ships for future use. Removed with the app on uninstall.
+Source: "..\traditional.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\simplified.txt";  DestDir: "{app}"; Flags: ignoreversion
 
 [Registry]
-; Point every variant at the installed dictionary (shared key).
-Root: HKLM; Subkey: "Software\CantoIME"; ValueType: string; \
-    ValueName: "DictionaryPath"; ValueData: "{app}\dictionary.txt"; \
-    Flags: uninsdeletekey
+; Clean up the per-user options key on uninstall (not created at install time;
+; the IME writes it when the user changes options).
+Root: HKCU; Subkey: "Software\CantoIME"; Flags: uninsdeletekey dontcreatekey
 
 [Run]
 ; Register the selected variant's TSF text service via the 64-bit regsvr32.
 Filename: "{sys}\regsvr32.exe"; Parameters: "/s ""{app}\CantoIME-HK.dll"""; \
-    Tasks: hk; StatusMsg: "Registering Hong Kong SAR input method..."; \
+    Check: IsVariant('HK'); StatusMsg: "Registering Hong Kong SAR input method..."; \
     Flags: runhidden waituntilterminated
 Filename: "{sys}\regsvr32.exe"; Parameters: "/s ""{app}\CantoIME-TW.dll"""; \
-    Tasks: tw; StatusMsg: "Registering Taiwan input method..."; \
+    Check: IsVariant('TW'); StatusMsg: "Registering Taiwan input method..."; \
     Flags: runhidden waituntilterminated
 Filename: "{sys}\regsvr32.exe"; Parameters: "/s ""{app}\CantoIME-MO.dll"""; \
-    Tasks: mo; StatusMsg: "Registering Macao SAR input method..."; \
+    Check: IsVariant('MO'); StatusMsg: "Registering Macao SAR input method..."; \
+    Flags: runhidden waituntilterminated
+Filename: "{sys}\regsvr32.exe"; Parameters: "/s ""{app}\CantoIME-CN.dll"""; \
+    Check: IsVariant('CN'); StatusMsg: "Registering China (Simplified) input method..."; \
+    Flags: runhidden waituntilterminated
+Filename: "{sys}\regsvr32.exe"; Parameters: "/s ""{app}\CantoIME-SG.dll"""; \
+    Check: IsVariant('SG'); StatusMsg: "Registering Singapore (Simplified) input method..."; \
     Flags: runhidden waituntilterminated
 
 [UninstallRun]
-; Unregister BEFORE files are removed. [UninstallRun] entries execute before
-; files are deleted, so the DLL still exists at unregistration time. The Tasks
-; filter means only the variant that was installed gets unregistered.
+; Unregister BEFORE files are removed. Only the variant DLL actually present in
+; {app} gets unregistered (exactly the one that was installed).
 Filename: "{sys}\regsvr32.exe"; Parameters: "/u /s ""{app}\CantoIME-HK.dll"""; \
-    Tasks: hk; Flags: runhidden waituntilterminated; RunOnceId: "UnregIME_HK"
+    Check: DllPresent('CantoIME-HK.dll'); Flags: runhidden waituntilterminated; RunOnceId: "UnregIME_HK"
 Filename: "{sys}\regsvr32.exe"; Parameters: "/u /s ""{app}\CantoIME-TW.dll"""; \
-    Tasks: tw; Flags: runhidden waituntilterminated; RunOnceId: "UnregIME_TW"
+    Check: DllPresent('CantoIME-TW.dll'); Flags: runhidden waituntilterminated; RunOnceId: "UnregIME_TW"
 Filename: "{sys}\regsvr32.exe"; Parameters: "/u /s ""{app}\CantoIME-MO.dll"""; \
-    Tasks: mo; Flags: runhidden waituntilterminated; RunOnceId: "UnregIME_MO"
+    Check: DllPresent('CantoIME-MO.dll'); Flags: runhidden waituntilterminated; RunOnceId: "UnregIME_MO"
+Filename: "{sys}\regsvr32.exe"; Parameters: "/u /s ""{app}\CantoIME-CN.dll"""; \
+    Check: DllPresent('CantoIME-CN.dll'); Flags: runhidden waituntilterminated; RunOnceId: "UnregIME_CN"
+Filename: "{sys}\regsvr32.exe"; Parameters: "/u /s ""{app}\CantoIME-SG.dll"""; \
+    Check: DllPresent('CantoIME-SG.dll'); Flags: runhidden waituntilterminated; RunOnceId: "UnregIME_SG"
+
+[Code]
+{ The variant list is built from the user's installed languages (BCP-47 tags in
+  HKCU\...\User Profile\Languages). Only installed Chinese languages are offered;
+  if none is installed, a message page replaces the selection and blocks install.
+  Caveat: when Setup is elevated with a *different* admin account, HKCU is that
+  admin's; in the normal single-admin case it is the installing user's. }
+
+var
+  gLangs: String;
+  gLangsRead: Boolean;
+  VariantPage: TInputOptionWizardPage;
+  NoLangPage: TOutputMsgWizardPage;
+  AvailTags: array of String;   { parallel to VariantPage radio indices }
+
+function UserLanguages(): String;
+var
+  S: String;
+begin
+  if not gLangsRead then
+  begin
+    if RegQueryMultiStringValue(HKEY_CURRENT_USER,
+         'Control Panel\International\User Profile', 'Languages', S) then
+      gLangs := Lowercase(S)
+    else
+      gLangs := '';
+    gLangsRead := True;
+  end;
+  Result := gLangs;
+end;
+
+function HasTag(const Tag: String): Boolean;
+begin
+  Result := Pos(Tag, UserLanguages()) > 0;
+end;
+
+function VariantInstalled(const Tag: String): Boolean;
+begin
+  if Tag = 'HK' then
+    Result := HasTag('zh-hant-hk') or HasTag('zh-hk')
+  else if Tag = 'TW' then
+    Result := HasTag('zh-hant-tw') or HasTag('zh-tw')
+  else if Tag = 'MO' then
+    Result := HasTag('zh-hant-mo') or HasTag('zh-mo')
+  else if Tag = 'CN' then
+    Result := HasTag('zh-hans-cn') or HasTag('zh-cn')
+  else if Tag = 'SG' then
+    Result := HasTag('zh-hans-sg') or HasTag('zh-sg')
+  else
+    Result := False;
+end;
+
+procedure AddVariant(const Tag, Desc: String);
+begin
+  if VariantInstalled(Tag) then
+  begin
+    SetArrayLength(AvailTags, GetArrayLength(AvailTags) + 1);
+    AvailTags[GetArrayLength(AvailTags) - 1] := Tag;
+    VariantPage.Add(Desc);
+  end;
+end;
+
+procedure InitializeWizard();
+var
+  anyLang: Boolean;
+begin
+  anyLang := VariantInstalled('HK') or VariantInstalled('TW') or VariantInstalled('MO')
+             or VariantInstalled('CN') or VariantInstalled('SG');
+
+  if anyLang then
+  begin
+    VariantPage := CreateInputOptionPage(wpWelcome,
+      'Select input method',
+      'Choose the Chinese variant to install CantoIME for.',
+      'Only Chinese languages you have added in Windows are listed. CantoIME will'
+        + ' be installed for the selected language.',
+      True, False);
+    AddVariant('HK', 'Chinese (Traditional, Hong Kong SAR)');
+    AddVariant('TW', 'Chinese (Traditional, Taiwan)');
+    AddVariant('MO', 'Chinese (Traditional, Macao SAR)');
+    AddVariant('CN', 'Chinese (Simplified, China)');
+    AddVariant('SG', 'Chinese (Simplified, Singapore)');
+    VariantPage.SelectedValueIndex := 0;
+  end
+  else
+  begin
+    NoLangPage := CreateOutputMsgPage(wpWelcome,
+      'No Chinese language installed',
+      'CantoIME needs a Chinese language',
+      'No Chinese language is installed on this account.'#13#10#13#10
+        + 'Add one first: Settings > Time & language > Language & region > Add a'
+        + ' language (for example "Chinese (Traditional, Hong Kong SAR)" or'
+        + ' "Chinese (Simplified, China)"). Then run this installer again.');
+  end;
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  { With no Chinese language installed, block progress past the message page. }
+  if (NoLangPage <> nil) and (CurPageID = NoLangPage.ID) then
+    WizardForm.NextButton.Enabled := False;
+end;
+
+function SelectedVariant(): String;
+begin
+  if VariantPage <> nil then
+    Result := AvailTags[VariantPage.SelectedValueIndex]
+  else
+    Result := '';
+end;
+
+function IsVariant(Tag: String): Boolean;
+begin
+  Result := SelectedVariant() = Tag;
+end;
+
+function DllPresent(Name: String): Boolean;
+begin
+  Result := FileExists(ExpandConstant('{app}\') + Name);
+end;

@@ -26,6 +26,8 @@
 #include "TextService.h"
 #include "EditSession.h"
 #include "LangBarButton.h"
+#include "OptionsDialog.h"
+#include "Settings.h"
 
 #include <msctf.h>
 #include <ctffunc.h>   // ITfContextView / display helpers live in msctf; kept for completeness
@@ -114,6 +116,18 @@ STDMETHODIMP CTextService::QueryInterface(REFIID riid, void** ppv)
     {
         *ppv = static_cast<ITfCompositionSink*>(this);
     }
+    else if (IsEqualIID(riid, IID_ITfFunctionProvider))
+    {
+        *ppv = static_cast<ITfFunctionProvider*>(this);
+    }
+    else if (IsEqualIID(riid, IID_ITfFunction))
+    {
+        *ppv = static_cast<ITfFunction*>(static_cast<ITfFnConfigure*>(this));
+    }
+    else if (IsEqualIID(riid, IID_ITfFnConfigure))
+    {
+        *ppv = static_cast<ITfFnConfigure*>(this);
+    }
 
     if (*ppv)
     {
@@ -157,9 +171,6 @@ STDMETHODIMP CTextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD 
     if (!InitKeyEventSink())
         goto fail;
 
-    // Load the dictionary at activation using the documented search order.
-    m_dict.Load(ResolveDictionaryPath());
-
     // Prepare (but do not show) the candidate window, and route candidate
     // clicks back to us so a mouse click accepts that candidate.
     m_candWnd.EnsureCreated();
@@ -167,6 +178,9 @@ STDMETHODIMP CTextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD 
     {
         OnCandidateClicked(globalIndex);
     });
+
+    // Apply per-user settings: candidate font size + load the selected dictionary.
+    ApplySettings();
 
     // Add the language-bar buttons (main 粵 icon + 中/英 input-mode toggle).
     AddLangBarButtons();
@@ -522,8 +536,12 @@ STDMETHODIMP CTextService::OnSetFocus(ITfDocumentMgr* /*pdimFocus*/, ITfDocument
 // ITfKeyEventSink
 // ---------------------------------------------------------------------------
 
-STDMETHODIMP CTextService::OnSetFocus(BOOL /*fForeground*/)
+STDMETHODIMP CTextService::OnSetFocus(BOOL fForeground)
 {
+    // Re-read settings on gaining focus so "Keyboard options" changes (dictionary
+    // choice, font size) take effect without a sign-out.
+    if (fForeground)
+        ApplySettings();
     return S_OK;
 }
 
@@ -1433,4 +1451,75 @@ HRESULT CTextService::DoCancelComposition(TfEditCookie ec, ITfContext* pic)
 void CTextService::EndComposition(ITfContext* pic)
 {
     CancelComposition(pic);
+}
+
+// ---------------------------------------------------------------------------
+// Per-user settings (HKCU): candidate font size + selected dictionary
+// ---------------------------------------------------------------------------
+
+void CTextService::ApplySettings()
+{
+    CantoSettings s = LoadSettings();
+    m_candWnd.SetFontSize(s.fontSize);
+
+    // Reload the dictionary only if the resolved path actually changed.
+    std::wstring path = ResolveDictionaryPath();
+    if (path != m_dictPathLoaded)
+    {
+        m_dict.Load(path);
+        m_dictPathLoaded = path;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ITfFunctionProvider + ITfFnConfigure: the "Keyboard options" dialog
+//
+// Windows opens the config dialog by CoCreate(CLSID, IID_ITfFnConfigure) using
+// the CLSID registered via ITfInputProcessorProfiles::Register (see dllmain).
+// It can also QI the function provider and GetFunction(GUID_NULL, ...). Show()
+// stands alone (no active thread manager needed): it just opens the dialog.
+// ---------------------------------------------------------------------------
+
+STDMETHODIMP CTextService::GetType(GUID* pguid)
+{
+    if (pguid == nullptr)
+        return E_INVALIDARG;
+    *pguid = CLSID_CantoIME;
+    return S_OK;
+}
+
+STDMETHODIMP CTextService::GetDescription(BSTR* pbstrDesc)
+{
+    if (pbstrDesc == nullptr)
+        return E_INVALIDARG;
+    *pbstrDesc = SysAllocString(TEXTSERVICE_DESC);
+    return *pbstrDesc ? S_OK : E_OUTOFMEMORY;
+}
+
+STDMETHODIMP CTextService::GetFunction(REFGUID rguid, REFIID riid, IUnknown** ppunk)
+{
+    if (ppunk == nullptr)
+        return E_INVALIDARG;
+    *ppunk = nullptr;
+    if (IsEqualGUID(rguid, GUID_NULL) && IsEqualIID(riid, IID_ITfFnConfigure))
+    {
+        *ppunk = static_cast<ITfFnConfigure*>(this);
+        AddRef();
+        return S_OK;
+    }
+    return E_NOINTERFACE;
+}
+
+STDMETHODIMP CTextService::GetDisplayName(BSTR* pbstrName)
+{
+    if (pbstrName == nullptr)
+        return E_INVALIDARG;
+    *pbstrName = SysAllocString(L"CantoIME Options");
+    return *pbstrName ? S_OK : E_OUTOFMEMORY;
+}
+
+STDMETHODIMP CTextService::Show(HWND hwndParent, LANGID /*langid*/, REFGUID /*rguidProfile*/)
+{
+    ShowOptionsDialog(hwndParent);
+    return S_OK;
 }

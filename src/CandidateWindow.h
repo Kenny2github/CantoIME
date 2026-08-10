@@ -16,6 +16,7 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include "Globals.h"   // CANTO_DEFAULT_FONT_SIZE
 #include <string>
 #include <vector>
 #include <functional>
@@ -32,6 +33,10 @@ public:
 
     // Creates (once) the underlying popup window. Safe to call repeatedly.
     bool EnsureCreated();
+
+    // Sets the candidate font cell height (px) and recomputes the row height.
+    // Rebuilds the font and re-lays-out if the size actually changed.
+    void SetFontSize(int px);
 
     // Replaces the full candidate list to be displayed.
     void SetCandidates(const std::vector<std::wstring>& candidates);
@@ -71,6 +76,7 @@ private:
     void OnClick(int x, int y);
     void Relayout();                 // recompute geometry, resize/move at anchor
     bool RegisterWindowClassOnce();
+    void RebuildFont();              // (re)create m_hFont at m_fontSize, set m_lineH
 
     // Builds the visible column layout from pageBase, capped both by maxCols and
     // by the anchor monitor's work-area width (so the popup never runs off
@@ -83,6 +89,9 @@ private:
     HFONT m_hFont   = nullptr;
     HBRUSH m_hSelBrush = nullptr;
     bool  m_visible = false;
+
+    int   m_fontSize = CANTO_DEFAULT_FONT_SIZE; // font cell height in px
+    int   m_lineH    = 0;                        // row height, derived from font
 
     std::vector<std::wstring> m_candidates; // full display list
     size_t m_pageBase = 0;                  // global index of top-left cell

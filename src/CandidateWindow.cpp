@@ -9,11 +9,11 @@
 const wchar_t* CandidateWindow::kClassName = L"CantoIME_" CANTO_VARIANT_TAG L"_CandidateWnd";
 bool CandidateWindow::s_classRegistered = false;
 
-// Visual layout constants (device pixels; not DPI-aware for simplicity).
+// Visual layout constants (device pixels; not DPI-aware for simplicity). The row
+// height and font size are per-instance (m_lineH / m_fontSize) so the candidate
+// font is user-configurable.
 static const int    kPadX     = 8;   // horizontal padding inside each column
 static const int    kPadY     = 6;   // vertical padding
-static const int    kLineH    = 24;  // height of each candidate row
-static const int    kFontSize = 18;  // font cell height
 static const int    kColGap   = 12;  // gap between columns in 2D mode
 static const size_t kPageSize = CANTO_MAX_CANDIDATES; // rows per column (9)
 
@@ -83,21 +83,60 @@ bool CandidateWindow::EnsureCreated()
     // Stash "this" so WndProc can reach the instance.
     SetWindowLongPtrW(m_hWnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
 
-    // Create the CJK-capable font once.
+    // Create the CJK-capable font (and derive the row height) once.
     if (!m_hFont)
-    {
-        LOGFONTW lf = { 0 };
-        lf.lfHeight  = -kFontSize;
-        lf.lfWeight  = FW_NORMAL;
-        lf.lfCharSet = DEFAULT_CHARSET;
-        wcscpy_s(lf.lfFaceName, L"Microsoft JhengHei");
-        m_hFont = CreateFontIndirectW(&lf);
-    }
+        RebuildFont();
 
     if (!m_hSelBrush)
         m_hSelBrush = CreateSolidBrush(GetSysColor(COLOR_HIGHLIGHT));
 
     return true;
+}
+
+// (Re)creates the candidate font at m_fontSize and derives the row height from
+// its actual metrics. Called on creation and whenever the font size changes.
+void CandidateWindow::RebuildFont()
+{
+    if (m_hFont)
+    {
+        DeleteObject(m_hFont);
+        m_hFont = nullptr;
+    }
+
+    LOGFONTW lf = { 0 };
+    lf.lfHeight  = -m_fontSize;
+    lf.lfWeight  = FW_NORMAL;
+    lf.lfCharSet = DEFAULT_CHARSET;
+    wcscpy_s(lf.lfFaceName, L"Microsoft JhengHei");
+    m_hFont = CreateFontIndirectW(&lf);
+
+    m_lineH = m_fontSize * 4 / 3 + 8; // fallback ratio
+    HDC hdc = GetDC(m_hWnd);          // nullptr window -> screen DC, fine here
+    if (hdc)
+    {
+        HFONT old = static_cast<HFONT>(SelectObject(hdc, m_hFont));
+        TEXTMETRICW tm = { 0 };
+        if (GetTextMetricsW(hdc, &tm))
+            m_lineH = tm.tmHeight + tm.tmExternalLeading + 8;
+        SelectObject(hdc, old);
+        ReleaseDC(m_hWnd, hdc);
+    }
+}
+
+void CandidateWindow::SetFontSize(int px)
+{
+    if (px < 8)  px = 8;
+    if (px > 72) px = 72;
+    if (px == m_fontSize && m_hFont)
+        return;
+
+    m_fontSize = px;
+    if (m_hFont || m_hWnd) // already created: rebuild now (else EnsureCreated will)
+    {
+        RebuildFont();
+        if (m_visible)
+            Relayout();
+    }
 }
 
 void CandidateWindow::SetCandidates(const std::vector<std::wstring>& candidates)
@@ -167,7 +206,7 @@ std::vector<CandidateWindow::Col> CandidateWindow::BuildCols(size_t pageBase,
         size_t rows = n - start;
         if (rows > kPageSize) rows = kPageSize;
 
-        int colW = 60;
+        int colW = m_fontSize * 3; // minimum width, scales with the font
         for (size_t r = 0; r < rows; ++r)
         {
             std::wstring row = RowText(r, m_candidates[start + r]);
@@ -220,7 +259,7 @@ void CandidateWindow::Relayout()
 
     // Total width drops the trailing gap and adds the leading pad already in x0.
     m_totalW = m_cols.back().x + m_cols.back().w + kPadX;
-    m_totalH = kPadY * 2 + kLineH * static_cast<int>(maxRows);
+    m_totalH = kPadY * 2 + m_lineH * static_cast<int>(maxRows);
 
     if (m_visible)
     {
@@ -296,15 +335,15 @@ void CandidateWindow::OnPaint(HWND hWnd)
         if (c > 0)
         {
             int sx = col.x - kColGap / 2;
-            RECT sep = { sx, kPadY, sx + 1, kPadY + kLineH * static_cast<int>(col.rows) };
+            RECT sep = { sx, kPadY, sx + 1, kPadY + m_lineH * static_cast<int>(col.rows) };
             FillRect(hdc, &sep, reinterpret_cast<HBRUSH>(GetStockObject(LTGRAY_BRUSH)));
         }
 
         for (size_t r = 0; r < col.rows; ++r)
         {
             size_t idx = col.start + r;
-            int y = kPadY + static_cast<int>(r) * kLineH;
-            RECT row = { col.x, y, col.x + col.w, y + kLineH };
+            int y = kPadY + static_cast<int>(r) * m_lineH;
+            RECT row = { col.x, y, col.x + col.w, y + m_lineH };
 
             bool selected = (idx == m_sel);
             if (selected)
@@ -318,7 +357,7 @@ void CandidateWindow::OnPaint(HWND hWnd)
             }
 
             std::wstring text = RowText(r, m_candidates[idx]);
-            RECT textRc = { col.x + 2, y, col.x + col.w, y + kLineH };
+            RECT textRc = { col.x + 2, y, col.x + col.w, y + m_lineH };
             DrawTextW(hdc, text.c_str(), -1, &textRc,
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         }
@@ -336,7 +375,7 @@ void CandidateWindow::OnClick(int x, int y)
             continue;
         if (y < kPadY)
             return;
-        size_t r = static_cast<size_t>((y - kPadY) / kLineH);
+        size_t r = static_cast<size_t>((y - kPadY) / m_lineH);
         if (r >= col.rows)
             return;
         size_t idx = col.start + r;
