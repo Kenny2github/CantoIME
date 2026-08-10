@@ -119,10 +119,13 @@ function New-Dib32([int]$size, [byte[]]$gray) {
             $xor[$p+3] = $(if (Is-Corner $x $y $size) { 0 } else { 255 })
         }
     }
-    $mask = Build-AndMask $size
-    $img = New-Object byte[] ($hdr.Length + $xor.Length + $mask.Bytes.Length)
+    # 32bpp icons use an all-zero AND mask; transparency is the alpha channel.
+    # A non-zero AND mask makes rc.exe treat it as an old pre-alpha DIB (RC2176).
+    $andStride = [int]([math]::Floor(($size + 31) / 32)) * 4
+    $and = New-Object byte[] ($andStride * $size)
+    $img = New-Object byte[] ($hdr.Length + $xor.Length + $and.Length)
     $o = 0
-    foreach ($part in @($hdr, $xor, $mask.Bytes)) { [Array]::Copy($part,0,$img,$o,$part.Length); $o += $part.Length }
+    foreach ($part in @($hdr, $xor, $and)) { [Array]::Copy($part,0,$img,$o,$part.Length); $o += $part.Length }
     return $img
 }
 
