@@ -23,15 +23,16 @@
 class CLangBarButton final : public ITfLangBarItemButton, public ITfSource
 {
 public:
-    // Returns the glyph currently shown on the button (e.g. L"粵" or L"中").
-    using GlyphFn = std::function<std::wstring()>;
+    // Returns a string on demand (the glyph, or the tooltip text).
+    using TextFn = std::function<std::wstring()>;
     // Invoked on a left click.
     using ClickFn = std::function<void()>;
 
     CLangBarButton(REFCLSID clsidService, REFGUID guidItem, DWORD style,
                    ULONG sort, const std::wstring& description);
 
-    void SetGlyph(GlyphFn fn) { m_glyph = std::move(fn); }
+    void SetGlyph(TextFn fn) { m_glyph = std::move(fn); }
+    void SetTooltip(TextFn fn) { m_tooltipFn = std::move(fn); }
     void SetOnClick(ClickFn fn) { m_onClick = std::move(fn); }
 
     // Tells the language bar to re-query our icon/text (after a mode change).
@@ -66,8 +67,9 @@ private:
 
     LONG                m_cRef = 1;
     TF_LANGBARITEMINFO  m_info = {};
-    std::wstring        m_tooltip;
-    GlyphFn             m_glyph;
+    std::wstring        m_tooltip;   // static fallback tooltip
+    TextFn              m_tooltipFn; // dynamic tooltip (overrides m_tooltip)
+    TextFn              m_glyph;
     ClickFn             m_onClick;
     ITfLangBarItemSink* m_pSink = nullptr; // advised by the language bar
 };

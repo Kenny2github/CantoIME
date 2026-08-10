@@ -170,7 +170,8 @@ STDMETHODIMP CLangBarButton::GetTooltipString(BSTR* pbstrToolTip)
 {
     if (pbstrToolTip == nullptr)
         return E_INVALIDARG;
-    *pbstrToolTip = SysAllocString(m_tooltip.c_str());
+    std::wstring tip = m_tooltipFn ? m_tooltipFn() : m_tooltip;
+    *pbstrToolTip = SysAllocString(tip.c_str());
     return (*pbstrToolTip != nullptr) ? S_OK : E_OUTOFMEMORY;
 }
 
