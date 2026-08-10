@@ -1,0 +1,8 @@
+; exports.def
+; Module-definition file: exports the standard COM in-proc server entry points.
+LIBRARY MinimalPinyinIME
+EXPORTS
+    DllGetClassObject   PRIVATE
+    DllCanUnloadNow     PRIVATE
+    DllRegisterServer   PRIVATE
+    DllUnregisterServer PRIVATE
