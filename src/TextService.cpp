@@ -466,9 +466,70 @@ STDMETHODIMP CTextService::OnCompositionTerminated(TfEditCookie /*ec*/, ITfCompo
 // Candidate management
 // ---------------------------------------------------------------------------
 
+// Upper bound on candidates we build for one buffer. Prefixes like "a" can
+// match thousands of keys; the window pages through them 9 at a time, but we
+// still cap the working set so a broad prefix stays responsive.
+static const size_t kMaxCandidates = 300;
+static const size_t kMaxPrefixKeys = 200;
+
+// Builds m_candidates from m_pinyin using greedy phrase segmentation:
+//   * Lock complete leading syllables (each an exact dictionary key), choosing
+//     each syllable's best (first) character.
+//   * Prefix-match the final, still-open syllable. For every key that begins
+//     with it, emit one candidate per character: display = locked chars + char
+//     + the key's leftover romanization; commit = locked chars + char.
+//
+// Example: "gaogaod" locks 高高 (gao, gao), then prefix-matches "d" -> "de"
+// giving display "高高的e", commit "高高的". "gagad" locks nothing ("ga" is not
+// an exact key) and "gagad" prefix-matches no key, so no candidates appear.
+void CTextService::BuildCandidates()
+{
+    m_candidates.clear();
+    if (m_pinyin.empty())
+        return;
+
+    // ---- Lock complete leading syllables, leaving the final one open. ----
+    std::wstring locked;   // committed Chinese for the fixed leading syllables
+    size_t i = 0;
+    while (i < m_pinyin.size())
+    {
+        size_t len = m_dict.LongestExactPrefixLen(m_pinyin, i);
+        // Never lock the trailing syllable: it must stay open for prefix
+        // matching (a fully typed final syllable is still a prefix of itself).
+        if (len == 0 || i + len >= m_pinyin.size())
+            break;
+
+        const auto& chars = m_dict.Lookup(m_pinyin.substr(i, len));
+        if (chars.empty())
+            break; // shouldn't happen (len came from an exact key), but be safe
+        locked += chars.front();
+        i += len;
+    }
+
+    std::wstring finalSyl = m_pinyin.substr(i);
+    if (finalSyl.empty())
+        return;
+
+    // ---- Prefix-match the final syllable. ----
+    std::vector<std::wstring> keys = m_dict.KeysWithPrefix(finalSyl, kMaxPrefixKeys);
+    for (const std::wstring& key : keys)
+    {
+        std::wstring remainder = key.substr(finalSyl.size()); // "" for exact match
+        for (const std::wstring& ch : m_dict.Lookup(key))
+        {
+            Candidate c;
+            c.display = locked + ch + remainder;
+            c.commit  = locked + ch;
+            m_candidates.push_back(std::move(c));
+            if (m_candidates.size() >= kMaxCandidates)
+                return;
+        }
+    }
+}
+
 void CTextService::UpdateCandidates(ITfContext* pic)
 {
-    m_candidates = m_dict.Lookup(m_pinyin);
+    BuildCandidates();
 
     if (m_candidates.empty())
     {
@@ -476,7 +537,12 @@ void CTextService::UpdateCandidates(ITfContext* pic)
         return;
     }
 
-    m_candWnd.SetCandidates(m_candidates);
+    std::vector<std::wstring> displays;
+    displays.reserve(m_candidates.size());
+    for (const Candidate& c : m_candidates)
+        displays.push_back(c.display);
+
+    m_candWnd.SetCandidates(displays);
     MoveCandidateWindowToCaret(pic);
 }
 
@@ -592,7 +658,7 @@ void CTextService::CommitCandidate(ITfContext* pic, size_t index)
 {
     if (index >= m_candidates.size())
         return;
-    std::wstring ch = m_candidates[index];
+    std::wstring ch = m_candidates[index].commit;
     RequestEditSession(pic, EditAction::Commit, ch);
     m_pinyin.clear();
     m_candidates.clear();

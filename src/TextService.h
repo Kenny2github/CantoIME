@@ -79,8 +79,18 @@ private:
     bool InitKeyEventSink();
     void UninitKeyEventSink();
 
+    // A single candidate. `display` is what the candidate window shows (may
+    // include a trailing romanization remainder, e.g. L"高o"); `commit` is the
+    // Chinese text actually inserted when the candidate is accepted (L"高").
+    struct Candidate
+    {
+        std::wstring display;
+        std::wstring commit;
+    };
+
     // Key handling helpers (all issue edit sessions as needed).
     bool IsComposing() const { return m_pComposition != nullptr; }
+    void BuildCandidates();          // fills m_candidates from m_pinyin
     void UpdateCandidates(ITfContext* pic);
     void MoveCandidateWindowToCaret(ITfContext* pic);
     void StartOrUpdateComposition(ITfContext* pic);
@@ -105,8 +115,8 @@ private:
     // The pinyin composition buffer (ASCII letters typed so far).
     std::wstring m_pinyin;
 
-    // Candidates currently shown (looked up from m_pinyin).
-    std::vector<std::wstring> m_candidates;
+    // Candidates currently shown (built from m_pinyin).
+    std::vector<Candidate> m_candidates;
 
     Dictionary      m_dict;
     CandidateWindow m_candWnd;
