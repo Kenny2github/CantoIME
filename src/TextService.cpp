@@ -519,23 +519,25 @@ STDMETHODIMP CTextService::OnCompositionTerminated(TfEditCookie /*ec*/, ITfCompo
 static const size_t kMaxCandidates = 300;
 static const size_t kMaxPrefixKeys = 200;
 
-// Builds m_candidates from m_romanization, prioritizing segmentations that use
-// FEWER dictionary keys.
+// Builds m_candidates from m_romanization, preferring segmentations that consume
+// the buffer greedily: the longest key first, then the longest next key, etc.
 //
 // The buffer is split into a run of leading exact keys (each locked to its best
 // character) followed by a non-empty final segment that is prefix-matched. Every
-// such split is enumerated; a split using k leading keys yields (k + 1)-key
-// candidates. Splits are processed in ascending key count, so for "abcdefg" with
-// keys abc/def/g/abcd/efg the 2-key "abcd efg" is emitted before the 3-key
-// "abc def g". The 0-leading-key split (whole buffer prefix-matched) is the 1-key
-// tier, so a real single key still outranks any multi-key segmentation, e.g.
-// "hah" surfaces 哈哈 (key "haha") before 下下 (a doubling of "ha").
+// such split is enumerated, then ordered by its per-key consumption sequence
+// (leading key lengths, then the final segment's length) compared largest-first.
+// So for "abcdefg" with keys abc/def/g/abcd/efg, "abcd efg" (lengths 4,3) beats
+// "abc def g" (lengths 3,3,1) because its first key is longer, not because it
+// uses fewer keys. The 0-leading-key split is the whole buffer prefix-matched:
+// its first key consumes all n characters, the maximum possible, so a real key
+// spanning the buffer still ranks first, e.g. "hah" surfaces 哈哈 (key "haha")
+// before 下下 (a doubling of "ha").
 //
 // Each split emits one entry per character of each prefix-matched key, displayed
 // as <locked chars><char><leftover romanization> and committed as <locked chars>
-// <char>. All splits share one dedup set keyed on the commit string: the first
-// time a given Chinese text appears it does so via the fewest keys (and, within a
-// split, the lexicographically smallest remainder), and later duplicates drop.
+// <char>. All splits share one dedup set keyed on the commit string, so the first
+// (greediest) segmentation to produce a given Chinese text wins and later
+// duplicates drop.
 void CTextService::BuildCandidates()
 {
     m_candidates.clear();
@@ -559,7 +561,7 @@ void CTextService::BuildCandidates()
             {
                 std::wstring commit = locked + ch;
                 if (!seenCommits.insert(commit).second)
-                    continue; // already emitted this text with fewer/earlier keys
+                    continue; // already emitted this text via a greedier split
                 Candidate c;
                 c.display = commit + remainder;
                 c.commit  = std::move(commit);
@@ -571,19 +573,23 @@ void CTextService::BuildCandidates()
         return true;
     };
 
-    // ---- Enumerate every leading split: partition a prefix [0, consumed) of the
-    // buffer into `segs` leading exact keys (locked to their best character),
-    // leaving a non-empty final segment [consumed, n) to prefix-match. ----
-    struct Split { std::wstring locked; size_t consumed; size_t segs; };
+    // ---- Enumerate every split: partition a prefix [0, consumed) of the buffer
+    // into leading exact keys (locked to their best character), leaving a
+    // non-empty final segment [consumed, n) to prefix-match. `seq` is the split's
+    // consumption profile: the leading key lengths followed by the final segment
+    // length (always summing to n). ----
+    struct Split { std::wstring locked; size_t consumed; std::vector<size_t> seq; };
     std::vector<Split> splits;
     const size_t kMaxSplits = 256; // safety valve against pathological fan-out
 
-    std::function<void(size_t, size_t, const std::wstring&)> gather =
-        [&](size_t pos, size_t segs, const std::wstring& locked)
+    std::function<void(size_t, const std::wstring&, const std::vector<size_t>&)> gather =
+        [&](size_t pos, const std::wstring& locked, const std::vector<size_t>& lens)
     {
         if (splits.size() >= kMaxSplits)
             return;
-        splits.push_back({ locked, pos, segs }); // pos < n (final segment non-empty)
+        std::vector<size_t> seq = lens;
+        seq.push_back(n - pos);                       // the final segment's length
+        splits.push_back({ locked, pos, std::move(seq) }); // pos < n
 
         // Extend by one more leading exact key, keeping the final segment
         // non-empty (pos + len < n). Lengths are bounded by the longest exact
@@ -595,14 +601,24 @@ void CTextService::BuildCandidates()
             const auto& chars = m_dict.Lookup(key);
             if (chars.empty())
                 continue; // not an exact key at this length
-            gather(pos + len, segs + 1, locked + chars.front());
+            std::vector<size_t> nextLens = lens;
+            nextLens.push_back(len);
+            gather(pos + len, locked + chars.front(), nextLens);
         }
     };
-    gather(0, 0, std::wstring());
+    gather(0, std::wstring(), std::vector<size_t>());
 
-    // Fewest keys first. stable_sort keeps discovery order within a key count.
+    // Greediest consumption first: compare the length sequences element by
+    // element, larger length wins. stable_sort keeps discovery order on ties.
     std::stable_sort(splits.begin(), splits.end(),
-                     [](const Split& a, const Split& b) { return a.segs < b.segs; });
+        [](const Split& a, const Split& b)
+        {
+            size_t m = std::min(a.seq.size(), b.seq.size());
+            for (size_t i = 0; i < m; ++i)
+                if (a.seq[i] != b.seq[i])
+                    return a.seq[i] > b.seq[i];
+            return a.seq.size() < b.seq.size();
+        });
 
     for (const Split& s : splits)
         if (!emit(s.locked, buf.substr(s.consumed)))
@@ -795,19 +811,14 @@ void CTextService::ResetSelection()
 }
 
 // Number of candidate columns currently displayed from m_pageBase. Always 1 in
-// 1D mode; up to kMaxCols in 2D mode. Kept identical to the window's own layout
-// math so navigation and hit-testing agree.
+// 1D mode. In 2D mode the count is whatever the window can actually fit on
+// screen (capped by kMaxCols and the monitor width), queried from the window so
+// navigation never lands on a column that was dropped for width.
 size_t CTextService::ColsShown() const
 {
     if (!m_twoD)
         return 1;
-    size_t n = m_candidates.size();
-    if (m_pageBase >= n)
-        return 1;
-    size_t cols = (n - m_pageBase + kPageSize - 1) / kPageSize; // ceil
-    if (cols > kMaxCols) cols = kMaxCols;
-    if (cols < 1) cols = 1;
-    return cols;
+    return m_candWnd.ColumnsThatFit(m_pageBase, m_twoD, kMaxCols);
 }
 
 // First global index of the column/page that holds the current selection.

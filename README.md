@@ -41,7 +41,9 @@ other DLLs by hand if you want more than one.)
 - **PgDn / PgUp** move a whole page and reset the selection to the top of it.
 - **Right arrow** latches a two-dimensional layout for the rest of the
   composition: further 9-candidate pages appear as columns to the right, and
-  **Left / Right** move between them.
+  **Left / Right** move between them. Only as many columns as fit the screen
+  width are shown at once; moving past the last visible column scrolls the grid
+  rather than drawing off screen.
 - **Number keys `1`–`9`** accept the candidate in that row of the currently
   selected page (column).
 - **Space** or **Enter** accepts the currently selected candidate (commits the
@@ -72,12 +74,13 @@ prefix-only match shows its leftover romanization after the character (e.g. with
 `gao` → 高, typing `ga` displays `高o`). Any leading segments in a multi-segment
 buffer must be **exact** keys.
 
-Multi-key input is segmented **fewest keys first**: every way to split the buffer
-into leading exact keys plus a prefix-matched final segment is enumerated, and
-segmentations using fewer keys rank higher. So if the dictionary has entries for
-`abc`, `def`, `g`, `abcd`, and `efg`, typing `abcdefg` lists the 2-key `abcd efg`
-before the 3-key `abc def g`. (The 0-leading-key split is the whole buffer
-prefix-matched, so a real single key still outranks any multi-key segmentation.)
+Multi-key input is segmented **greedily by longest key**: every way to split the
+buffer into leading exact keys plus a prefix-matched final segment is enumerated,
+then ordered by how much each key consumes, longest first. So if the dictionary
+has entries for `abc`, `def`, `g`, `abcd`, and `efg`, typing `abcdefg` lists
+`abcd efg` before `abc def g` — because `abcd` is longer than `abc`, not because
+it uses fewer keys. (The whole-buffer prefix match consumes the most with its
+first key, so a real single key spanning the buffer still ranks first.)
 
 ### Dictionary search order (documented)
 
@@ -266,10 +269,10 @@ Windows may ask you to restart to finish the update. Bump `MyAppVersion` in
   inside a read edit session), with a caret/cursor-position fallback.
 - **Dictionary lookup.** On every keystroke the buffer is segmented every way it
   can be: any run of leading exact keys plus a prefix-matched final segment. The
-  segmentations are ranked fewest-keys-first (see the dictionary format section).
-  Matches populate the candidate list, each carrying the Chinese text to commit
-  plus the display string (which may include the final segment's leftover
-  romanization).
+  segmentations are ranked greedily by longest key consumed (see the dictionary
+  format section). Matches populate the candidate list, each carrying the Chinese
+  text to commit plus the display string (which may include the final segment's
+  leftover romanization).
 
 ---
 
@@ -277,9 +280,10 @@ Windows may ask you to restart to finish the update. Bump `MyAppVersion` in
 
 - **No tone input** and no fuzzy/romanization correction.
 - **Leading segments are locked to one character.** Every segmentation is
-  enumerated and ranked fewest-keys-first, but each leading segment is locked to
-  its single best (first-listed) character; there is no per-segment candidate
-  choice for the locked portion. Enumeration is capped for very long buffers.
+  enumerated and ranked greedily by longest key, but each leading segment is
+  locked to its single best (first-listed) character; there is no per-segment
+  candidate choice for the locked portion. Enumeration is capped for very long
+  buffers.
 - **Not DPI-aware**; the popup uses fixed pixel metrics.
 - The caret-position fallback (`GetCaretPos` -> `ClientToScreen` on the
   foreground window) is heuristic and may be imprecise in some apps.

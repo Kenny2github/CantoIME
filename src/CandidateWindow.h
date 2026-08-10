@@ -56,12 +56,24 @@ public:
     // list, passing scroll through to the app underneath otherwise.
     bool HitTestScreen(POINT pt) const;
 
+    // Number of 2D columns that actually fit on screen starting at pageBase,
+    // given the desired mode and column cap. The text service queries this so
+    // navigation never selects a column the window had to drop for width.
+    size_t ColumnsThatFit(size_t pageBase, bool twoD, size_t maxCols) const;
+
 private:
     static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
     void OnPaint(HWND hWnd);
     void OnClick(int x, int y);
     void Relayout();                 // recompute geometry, resize/move at anchor
     bool RegisterWindowClassOnce();
+
+    // Builds the visible column layout from pageBase, capped both by maxCols and
+    // by the anchor monitor's work-area width (so the popup never runs off
+    // screen). At least one column is always returned.
+    std::vector<Col> BuildCols(size_t pageBase, bool twoD, size_t maxCols) const;
+    // Work-area width (px) of the monitor nearest the current anchor.
+    int AvailWidth() const;
 
     // One displayed column: its left edge, width, first global candidate index,
     // and how many rows it holds (up to the page size).
