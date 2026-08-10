@@ -38,6 +38,15 @@
 HHOOK         CTextService::s_wheelHook  = nullptr;
 CTextService* CTextService::s_wheelOwner = nullptr;
 
+// Statics backing the low-level keyboard hook (lone-Shift mode toggle).
+HHOOK         CTextService::s_kbdHook  = nullptr;
+CTextService* CTextService::s_kbdOwner = nullptr;
+
+// Posted from the keyboard hook to the message-only window to run the toggle on
+// the UI thread.
+static const UINT WM_CANTO_TOGGLE = WM_APP + 0x101;
+static const wchar_t* kMsgWndClass = L"CantoIME_" CANTO_VARIANT_TAG L"_MsgWnd";
+
 // ---------------------------------------------------------------------------
 // Construction / destruction
 // ---------------------------------------------------------------------------
@@ -160,6 +169,10 @@ STDMETHODIMP CTextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD 
     // Add the language-bar buttons (main 粵 icon + 中/英 input-mode toggle).
     AddLangBarButtons();
 
+    // Watch for a lone-Shift press to toggle input mode (see the header note).
+    CreateMsgWindow();
+    InstallKeyboardHook();
+
     return S_OK;
 
 fail:
@@ -170,6 +183,8 @@ fail:
 STDMETHODIMP CTextService::Deactivate()
 {
     // Ensure any in-flight composition is torn down and UI hidden.
+    RemoveKeyboardHook();
+    DestroyMsgWindow();
     RemoveLangBarButtons();
     RemoveWheelHook();
     ClearContext();
@@ -278,6 +293,114 @@ void CTextService::ToggleInputMode()
 
     if (m_pModeButton)
         m_pModeButton->Update();
+}
+
+// ---- Lone-Shift toggle: message-only window + low-level keyboard hook --------
+
+LRESULT CALLBACK CTextService::MsgWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    if (msg == WM_CANTO_TOGGLE)
+    {
+        CTextService* self = reinterpret_cast<CTextService*>(
+            GetWindowLongPtrW(hWnd, GWLP_USERDATA));
+        if (self)
+            self->ToggleInputMode();
+        return 0;
+    }
+    return DefWindowProcW(hWnd, msg, wParam, lParam);
+}
+
+void CTextService::CreateMsgWindow()
+{
+    if (m_hMsgWnd)
+        return;
+
+    static bool s_registered = false;
+    if (!s_registered)
+    {
+        WNDCLASSEXW wc = { sizeof(wc) };
+        wc.lpfnWndProc   = CTextService::MsgWndProc;
+        wc.hInstance     = g_hInst;
+        wc.lpszClassName = kMsgWndClass;
+        if (RegisterClassExW(&wc) == 0 &&
+            GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+            return;
+        s_registered = true;
+    }
+
+    m_hMsgWnd = CreateWindowExW(0, kMsgWndClass, L"", 0, 0, 0, 0, 0,
+                                HWND_MESSAGE, nullptr, g_hInst, nullptr);
+    if (m_hMsgWnd)
+        SetWindowLongPtrW(m_hMsgWnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+}
+
+void CTextService::DestroyMsgWindow()
+{
+    if (m_hMsgWnd)
+    {
+        DestroyWindow(m_hMsgWnd);
+        m_hMsgWnd = nullptr;
+    }
+}
+
+void CTextService::InstallKeyboardHook()
+{
+    s_kbdOwner = this;
+    if (s_kbdHook)
+        return;
+    s_kbdHook = SetWindowsHookExW(WH_KEYBOARD_LL, LowLevelKeyboardProc, g_hInst, 0);
+}
+
+void CTextService::RemoveKeyboardHook()
+{
+    if (s_kbdHook)
+    {
+        UnhookWindowsHookEx(s_kbdHook);
+        s_kbdHook = nullptr;
+    }
+    if (s_kbdOwner == this)
+        s_kbdOwner = nullptr;
+    m_kbShiftDown = false;
+    m_kbShiftLone = false;
+}
+
+LRESULT CALLBACK CTextService::LowLevelKeyboardProc(int code, WPARAM wParam, LPARAM lParam)
+{
+    if (code == HC_ACTION && s_kbdOwner)
+    {
+        const KBDLLHOOKSTRUCT* p = reinterpret_cast<const KBDLLHOOKSTRUCT*>(lParam);
+        const bool isShift = IsShiftVK(p->vkCode);
+
+        if (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN)
+        {
+            if (isShift)
+            {
+                // First press (ignore auto-repeat): arm the lone-Shift toggle.
+                if (!s_kbdOwner->m_kbShiftDown)
+                {
+                    s_kbdOwner->m_kbShiftDown = true;
+                    s_kbdOwner->m_kbShiftLone = true;
+                }
+            }
+            else
+            {
+                s_kbdOwner->m_kbShiftLone = false; // another key -> not a lone tap
+            }
+        }
+        else if (wParam == WM_KEYUP || wParam == WM_SYSKEYUP)
+        {
+            if (isShift)
+            {
+                const bool lone = s_kbdOwner->m_kbShiftLone;
+                s_kbdOwner->m_kbShiftDown = false;
+                s_kbdOwner->m_kbShiftLone = false;
+                // Run the toggle on the UI thread, not inside this hook.
+                if (lone && s_kbdOwner->m_hMsgWnd)
+                    PostMessageW(s_kbdOwner->m_hMsgWnd, WM_CANTO_TOGGLE, 0, 0);
+            }
+        }
+    }
+    return CallNextHookEx(nullptr, code, wParam, lParam);
 }
 
 // ---------------------------------------------------------------------------
@@ -418,10 +541,6 @@ STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* /*pic*/, WPARAM wParam, LPA
     if (pfEaten == nullptr)
         return E_INVALIDARG;
     *pfEaten = FALSE;
-
-    // Track a lone Shift for the input-mode toggle: Shift arms it; any other key
-    // disarms it (so Shift + letter still types normally, no toggle).
-    m_shiftArmed = IsShiftVK(wParam);
 
     if (CtrlOrAltDown())
         return S_OK; // never intercept shortcuts
@@ -573,31 +692,17 @@ STDMETHODIMP CTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM /*lP
     return S_OK;
 }
 
-STDMETHODIMP CTextService::OnTestKeyUp(ITfContext*, WPARAM wParam, LPARAM, BOOL* pfEaten)
+STDMETHODIMP CTextService::OnTestKeyUp(ITfContext*, WPARAM, LPARAM, BOOL* pfEaten)
 {
-    if (pfEaten == nullptr)
-        return E_INVALIDARG;
-    // Eat the release of a lone Shift so the real OnKeyUp fires and performs the
-    // mode toggle. We only ever eat a Shift that was pressed and released alone
-    // (m_shiftArmed), so Shift + another key is untouched and capital letters
-    // keep working. We never eat the Shift *down*, so modifiers still reach apps.
-    *pfEaten = (IsShiftVK(wParam) && m_shiftArmed) ? TRUE : FALSE;
+    // The lone-Shift mode toggle is handled by a low-level keyboard hook, not
+    // here: TSF does not reliably deliver modifier-only keys to this sink.
+    if (pfEaten) *pfEaten = FALSE;
     return S_OK;
 }
 
-STDMETHODIMP CTextService::OnKeyUp(ITfContext*, WPARAM wParam, LPARAM, BOOL* pfEaten)
+STDMETHODIMP CTextService::OnKeyUp(ITfContext*, WPARAM, LPARAM, BOOL* pfEaten)
 {
-    if (pfEaten == nullptr)
-        return E_INVALIDARG;
-    *pfEaten = FALSE;
-
-    // A lone Shift press+release toggles Chinese/English input.
-    if (IsShiftVK(wParam) && m_shiftArmed)
-    {
-        m_shiftArmed = false;
-        ToggleInputMode();
-        *pfEaten = TRUE;
-    }
+    if (pfEaten) *pfEaten = FALSE;
     return S_OK;
 }
 
