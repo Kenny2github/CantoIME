@@ -48,7 +48,8 @@ CTextService* CTextService::s_kbdOwner = nullptr;
 
 // Posted from the keyboard hook to the message-only window to run the toggle on
 // the UI thread.
-static const UINT WM_CANTO_TOGGLE = WM_APP + 0x101;
+static const UINT WM_CANTO_TOGGLE  = WM_APP + 0x101;
+static const UINT WM_CANTO_OPTIONS = WM_APP + 0x102; // open the options dialog
 static const wchar_t* kMsgWndClass = L"CantoIME_" CANTO_VARIANT_TAG L"_MsgWnd";
 
 static bool IsShiftVK(WPARAM vk); // defined with the key-handling helpers below
@@ -271,7 +272,9 @@ void CTextService::AddLangBarButtons()
         m_pModeButton->SetTooltip([this] {
             return std::wstring(m_chineseMode ? L"Chinese mode" : L"English mode");
         });
-        m_pModeButton->SetOnClick([this] { ToggleInputMode(); });
+        // Left-click toggles; double-click opens the settings dialog (a reliable
+        // path that works in the modern Win11 tray, unlike a second button).
+        m_pModeButton->SetOnClick([this] { OnModeButtonClick(); });
         // Right-click opens the settings context menu (needs the desktop Language
         // Bar, which Win11 hides). The settings button below is the tray-friendly
         // path. The langbar delivers right-click through InitMenu -> this callback.
@@ -280,15 +283,20 @@ void CTextService::AddLangBarButtons()
         pMgr->AddItem(m_pModeButton);
     }
 
-    // Settings button (gear): a plain button whose left-click opens the options
-    // dialog. Left-click is delivered to OnClick even in the modern Win11 tray
-    // (same path the mode button's toggle uses), so no Language Bar is needed.
+    // Settings button (設/设): left-click opens the options dialog. NOTE: Win11's
+    // modern tray only slots the input indicator + the mode button, so this extra
+    // button shows only when the desktop Language Bar is enabled. The reliable
+    // tray path is double-clicking the mode button (see OnModeButtonClick).
     m_pSettingsButton = new (std::nothrow) CLangBarButton(
         CLSID_CantoIME, GUID_CantoSettingsButton,
         TF_LBI_STYLE_BTN_BUTTON | TF_LBI_STYLE_SHOWNINTRAY, 2, L"CantoIME settings");
     if (m_pSettingsButton)
     {
-        m_pSettingsButton->SetGlyph([] { return std::wstring(L"\u2699"); }); // ⚙ gear
+        // 設 (Traditional) / 设 (Simplified) = "settings". Escapes so the glyph
+        // does not depend on the source-file encoding MSVC assumes.
+        m_pSettingsButton->SetGlyph([] {
+            return std::wstring(CANTO_IS_SIMPLIFIED ? L"\u8BBE" : L"\u8A2D"); // 设 / 設
+        });
         m_pSettingsButton->SetTooltip([] { return std::wstring(L"CantoIME settings"); });
         m_pSettingsButton->SetOnClick([] { ShowOptionsDialog(nullptr); });
         pMgr->AddItem(m_pSettingsButton);
@@ -313,6 +321,31 @@ void CTextService::RemoveLangBarButtons()
     if (m_pMainButton)     { m_pMainButton->Release();     m_pMainButton = nullptr; }
     if (m_pModeButton)     { m_pModeButton->Release();     m_pModeButton = nullptr; }
     if (m_pSettingsButton) { m_pSettingsButton->Release(); m_pSettingsButton = nullptr; }
+}
+
+// Mode button click handler. Single-click toggles input mode. A double-click
+// (two clicks within the system double-click time) toggles twice -- net no
+// change -- and opens the settings dialog, so a double-click leaves the mode as
+// it was and just shows settings. This is the reliable settings path in the
+// modern Win11 tray (where an extra button is not shown).
+void CTextService::OnModeButtonClick()
+{
+    DWORD now = GetTickCount();
+    bool isDouble = (m_lastModeClickTick != 0) &&
+                    (now - m_lastModeClickTick <= GetDoubleClickTime());
+
+    ToggleInputMode();
+
+    if (isDouble)
+    {
+        m_lastModeClickTick = 0;
+        if (m_hMsgWnd)
+            PostMessageW(m_hMsgWnd, WM_CANTO_OPTIONS, 0, 0);
+    }
+    else
+    {
+        m_lastModeClickTick = now;
+    }
 }
 
 // Flips between Chinese and English input. Any in-flight composition is
@@ -346,6 +379,12 @@ LRESULT CALLBACK CTextService::MsgWndProc(HWND hWnd, UINT msg, WPARAM wParam, LP
     case WM_CANTO_TOGGLE:
         if (self)
             self->ToggleInputMode();
+        return 0;
+
+    case WM_CANTO_OPTIONS:
+        // Run the modal dialog from the message loop, not inside the langbar
+        // click callback (avoids reentrancy).
+        ShowOptionsDialog(nullptr);
         return 0;
 
     // Light/dark theme switched: WM_SETTINGCHANGE carries "ImmersiveColorSet".

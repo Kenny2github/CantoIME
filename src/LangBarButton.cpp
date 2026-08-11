@@ -49,33 +49,62 @@ HICON MakeGlyphIcon(const std::wstring& glyph)
     HDC hdcMem = CreateCompatibleDC(nullptr);
     HBITMAP hDib = CreateDIBSection(hdcMem, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0);
     if (!hDib) { DeleteDC(hdcMem); return nullptr; }
-    memset(bits, 0, static_cast<size_t>(cx) * cy * 4);
 
     HBITMAP oldBmp = static_cast<HBITMAP>(SelectObject(hdcMem, hDib));
 
-    LOGFONTW lf = { 0 };
-    // Overscan the cell so the CJK ink (which sits inside the em box with built-in
-    // bearing) fills the icon like Microsoft Quick's, rather than looking small.
-    // DT_NOCLIP + DT_VCENTER keep it centered; a small overflow is absorbed.
-    lf.lfHeight  = -(cy + cy / 5);
-    lf.lfWeight  = FW_NORMAL;
-    lf.lfCharSet = DEFAULT_CHARSET;
-    lf.lfQuality = ANTIALIASED_QUALITY; // grayscale AA (no ClearType colour fringe)
-    wcscpy_s(lf.lfFaceName, L"Microsoft JhengHei");
-    HFONT font = CreateFontIndirectW(&lf);
-    HFONT oldFont = static_cast<HFONT>(SelectObject(hdcMem, font));
+    // Fraction of the icon cell the glyph ink should fill. Tuned to match the 粵
+    // brand icon and Microsoft Quick; raise/lower it to make glyphs bigger/smaller.
+    const double kFillTarget = 0.92;
 
-    // Draw the glyph white on the zeroed (black) DIB; the white intensity is the
-    // per-pixel coverage. GDI leaves the alpha byte at 0, so we rebuild it below.
-    RECT rc = { 0, 0, cx, cy };
-    SetBkMode(hdcMem, TRANSPARENT);
-    SetTextColor(hdcMem, RGB(255, 255, 255));
-    DrawTextW(hdcMem, glyph.c_str(), -1, &rc,
-              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP | DT_NOPREFIX);
+    // Draws the glyph (white on a cleared black DIB) at the given em height and
+    // returns the ink's pixel extent (max of width/height), or 0 if there is none.
+    auto drawAndMeasure = [&](int emPx) -> int
+    {
+        memset(bits, 0, static_cast<size_t>(cx) * cy * 4);
+        LOGFONTW lf = { 0 };
+        lf.lfHeight  = -emPx;
+        lf.lfWeight  = FW_NORMAL;
+        lf.lfCharSet = DEFAULT_CHARSET;
+        lf.lfQuality = ANTIALIASED_QUALITY; // grayscale AA (no ClearType fringe)
+        wcscpy_s(lf.lfFaceName, L"Microsoft JhengHei");
+        HFONT f = CreateFontIndirectW(&lf);
+        HFONT of = static_cast<HFONT>(SelectObject(hdcMem, f));
+        RECT rc = { 0, 0, cx, cy };
+        SetBkMode(hdcMem, TRANSPARENT);
+        SetTextColor(hdcMem, RGB(255, 255, 255));
+        DrawTextW(hdcMem, glyph.c_str(), -1, &rc,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP | DT_NOPREFIX);
+        SelectObject(hdcMem, of);
+        DeleteObject(f);
+        GdiFlush();
 
-    SelectObject(hdcMem, oldFont);
-    DeleteObject(font);
-    GdiFlush();
+        int minX = cx, minY = cy, maxX = -1, maxY = -1;
+        const BYTE* p = static_cast<const BYTE*>(bits);
+        for (int y = 0; y < cy; ++y)
+            for (int x = 0; x < cx; ++x)
+                if (p[(y * cx + x) * 4 + 2] > 24) // coverage threshold
+                {
+                    if (x < minX) minX = x;
+                    if (x > maxX) maxX = x;
+                    if (y < minY) minY = y;
+                    if (y > maxY) maxY = y;
+                }
+        if (maxX < 0)
+            return 0;
+        const int w = maxX - minX + 1, h = maxY - minY + 1;
+        return (w > h) ? w : h;
+    };
+
+    // Pass 1: measure the ink at em = cell height. Pass 2: scale the font so the
+    // ink fills kFillTarget of the cell, then re-render (leaving it in the DIB).
+    int ink = drawAndMeasure(cy);
+    if (ink > 0)
+    {
+        int em = static_cast<int>(static_cast<double>(cy) * kFillTarget * cy / ink + 0.5);
+        if (em < 6)       em = 6;
+        if (em > 3 * cy)  em = 3 * cy;
+        drawAndMeasure(em);
+    }
 
     // Convert coverage -> premultiplied BGRA in the theme tone.
     BYTE* px = static_cast<BYTE*>(bits);

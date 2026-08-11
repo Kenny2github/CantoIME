@@ -188,6 +188,10 @@ private:
 
     void ToggleInputMode(); // flip Chinese/English, commit any composition first
     void RefreshLangBarIcons(); // re-query button icons (e.g. on a theme change)
+    // Mode-button click: single-click toggles; a double-click (net no toggle)
+    // opens the settings dialog. Reliable in the modern Win11 tray.
+    void OnModeButtonClick();
+    DWORD m_lastModeClickTick = 0;
     // Right-click context menu on the mode button: all settings live here
     // (dictionary, toggle key, font size). BuildSettingsMenu populates it via
     // ITfMenu (from InitMenu); ApplyMenuChoice applies a selection live.

@@ -109,14 +109,17 @@ DLL; no `%APPDATA%` and no registry path search are used.
 
 ### Options
 
-CantoIME shows a **⚙ settings button** in the taskbar input area (next to the 粵
-indicator and the 中/英 mode button). **Click it to open the options dialog.** This
-works in the normal Windows 11 tray with no extra setup.
+**Double-click the 中/英 mode button** in the taskbar input area to open the options
+dialog. (A single click toggles Chinese/English; a double-click toggles twice — net
+no change — and opens settings.) This works in the normal Windows 11 tray with no
+extra setup, because Win11 only gives tray slots to the input indicator and the mode
+button, not to an extra button.
 
-Two other paths reach the same settings: right-click the **中/英 mode button** for a
-context menu (only when the *desktop Language Bar* is enabled — Windows 11 hides it
-by default, under Settings → Time & language → Typing → Advanced keyboard settings),
-and `ITfFnConfigure` (the legacy input-method dialog). Windows' Settings → "Keyboard
+Other paths reach the same settings when the **desktop Language Bar** is enabled
+(Settings → Time & language → Typing → Advanced keyboard settings; Win11 hides it by
+default): a dedicated **設 / 设 settings button** (left-click opens the dialog) and a
+**right-click context menu** on the mode button. `ITfFnConfigure` (the legacy
+input-method dialog) opens the same settings too. Windows' Settings → "Keyboard
 options" is Microsoft-in-box-IME-only, so a third-party TIP cannot appear there.
 
 All of these edit three per-user settings, stored in `HKCU\Software\CantoIME`:
