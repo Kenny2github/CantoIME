@@ -18,6 +18,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      # Fail loudly if LFS did not materialize the dictionaries (a pointer stub
+      # would otherwise build and ship a broken IME).
+      - name: Verify dictionaries pulled from LFS
+        shell: pwsh
+        run: |
+          foreach ($f in 'traditional.txt', 'simplified.txt') {
+            if ((Get-Content $f -TotalCount 1) -like 'version https://git-lfs.github.com/spec/v1*') {
+              throw "$f is still a Git LFS pointer, not the real dictionary."
+            }
+          }
 
       - name: Configure (CMake, Visual Studio x64)
         run: cmake -B build -A x64
