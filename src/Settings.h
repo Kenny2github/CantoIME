@@ -55,8 +55,17 @@ bool SaveSettings(const CantoSettings& s);
 // dictionary at load (see Dictionary::ApplyOverrides).
 using CantoOverride = std::pair<std::wstring, std::vector<std::wstring>>;
 
-// Reads/writes overrides under HKCU\Software\CantoIME\Overrides, one REG_SZ
-// value per key holding the space-separated candidate list. LoadOverrides
-// returns them sorted by key for a stable UI order.
-std::vector<CantoOverride> LoadOverrides();
-bool SaveOverrides(const std::vector<CantoOverride>& overrides);
+// Identity token for the dictionary an override set belongs to, so overrides
+// are scoped per dictionary. Stock scripts use a fixed token; a custom
+// dictionary is identified by its (hashed, registry-safe) path. Returns empty
+// when no dictionary is resolvable (Custom with an empty path).
+std::wstring DictionaryIdentity(DictSource src, const std::wstring& customPath);
+
+// Reads/writes overrides under HKCU\Software\CantoIME\Overrides\<dictId>, one
+// REG_SZ value per key holding the space-separated candidate list. Overrides
+// are scoped to dictId (see DictionaryIdentity) so each dictionary carries its
+// own set. LoadOverrides returns them sorted by key for a stable UI order; an
+// empty dictId yields no overrides and SaveOverrides is a no-op.
+std::vector<CantoOverride> LoadOverrides(const std::wstring& dictId);
+bool SaveOverrides(const std::wstring& dictId,
+                   const std::vector<CantoOverride>& overrides);

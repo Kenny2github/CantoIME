@@ -18,7 +18,7 @@ static const wchar_t* kValToggle   = L"ToggleKey";       // 0=none 1=L 2=R 3=bot
 
 // Subkey holding user candidate overrides: one REG_SZ value per key, whose data
 // is the space-separated candidate list.
-static const wchar_t* kOverridesSubkey = L"Software\\CantoIME\\Overrides";
+static const wchar_t* kOverridesBase = L"Software\\CantoIME\\Overrides";
 
 static const int kMinFont = 8;
 static const int kMaxFont = 72;
@@ -160,12 +160,51 @@ static std::vector<std::wstring> SplitTokens(const std::wstring& s)
     return out;
 }
 
-std::vector<CantoOverride> LoadOverrides()
+// FNV-1a 64-bit over the UTF-16 code units, as 16 lowercase hex digits. Keeps a
+// custom dictionary's override subkey name registry-safe (paths contain '\\').
+static std::wstring HashPath(const std::wstring& p)
+{
+    unsigned long long h = 1469598103934665603ULL;
+    for (wchar_t c : p)
+    {
+        h ^= static_cast<unsigned long long>(static_cast<unsigned short>(c));
+        h *= 1099511628211ULL;
+    }
+    const wchar_t* hex = L"0123456789abcdef";
+    std::wstring out(16, L'0');
+    for (int i = 15; i >= 0; --i) { out[i] = hex[h & 0xF]; h >>= 4; }
+    return out;
+}
+
+std::wstring DictionaryIdentity(DictSource src, const std::wstring& customPath)
+{
+    switch (src)
+    {
+    case DictSource::StockSimplified: return L"simp";
+    case DictSource::Custom:
+    {
+        std::wstring p = LowerTrim(customPath);
+        if (p.empty()) return std::wstring();
+        return L"custom-" + HashPath(p);
+    }
+    default: return L"trad";
+    }
+}
+
+static std::wstring OverridesSubkey(const std::wstring& dictId)
+{
+    return std::wstring(kOverridesBase) + L"\\" + dictId;
+}
+
+std::vector<CantoOverride> LoadOverrides(const std::wstring& dictId)
 {
     std::vector<CantoOverride> out;
+    if (dictId.empty())
+        return out;
 
+    std::wstring subkey = OverridesSubkey(dictId);
     HKEY hKey = nullptr;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, kOverridesSubkey, 0,
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, subkey.c_str(), 0,
                       KEY_READ | KEY_WOW64_64KEY, &hKey) != ERROR_SUCCESS)
         return out;
 
@@ -201,16 +240,22 @@ std::vector<CantoOverride> LoadOverrides()
     return out;
 }
 
-bool SaveOverrides(const std::vector<CantoOverride>& overrides)
+bool SaveOverrides(const std::wstring& dictId,
+                   const std::vector<CantoOverride>& overrides)
 {
+    if (dictId.empty())
+        return true; // no dictionary to scope to (e.g. Custom with no path yet)
+
+    std::wstring subkey = OverridesSubkey(dictId);
+
     // Rewrite the whole subkey so removed entries actually disappear.
-    RegDeleteTreeW(HKEY_CURRENT_USER, kOverridesSubkey);
+    RegDeleteTreeW(HKEY_CURRENT_USER, subkey.c_str());
 
     if (overrides.empty())
         return true; // nothing to write; the cleared subkey is the desired state
 
     HKEY hKey = nullptr;
-    if (RegCreateKeyExW(HKEY_CURRENT_USER, kOverridesSubkey, 0, nullptr,
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, subkey.c_str(), 0, nullptr,
                         REG_OPTION_NON_VOLATILE, KEY_WRITE | KEY_WOW64_64KEY,
                         nullptr, &hKey, nullptr) != ERROR_SUCCESS)
         return false;

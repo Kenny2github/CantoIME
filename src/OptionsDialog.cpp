@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <vector>
 #include <string>
+#include <map>
 #include <cwctype>
 
 // Dictionary source dropdown. The selected index maps 1:1 to DictSource and is
@@ -124,8 +125,9 @@ static void OnBrowse(HWND hDlg)
 
 // --- Custom-candidate overrides ----------------------------------------------
 //
-// The dialog edits a working copy of the overrides (a heap vector held in
-// DWLP_USER) so Cancel discards changes. OK persists it via SaveOverrides.
+// The dialog edits a working copy of the overrides (a per-dictionary model held
+// in DWLP_USER) so Cancel discards changes. OK persists each touched dictionary's
+// set via SaveOverrides.
 
 static std::wstring LowerTrim(const std::wstring& s)
 {
@@ -164,9 +166,30 @@ static std::wstring JoinTokens(const std::vector<std::wstring>& v)
     return out;
 }
 
-static std::vector<CantoOverride>* Model(HWND hDlg)
+// Overrides are scoped per dictionary. The dialog stages an override set for
+// every dictionary it has touched (keyed by DictionaryIdentity), so switching
+// the dictionary selection swaps which set is shown/edited, and OK writes each
+// touched set back to its own dictionary. curId is the dictionary currently
+// shown; empty means none is resolvable (Custom with no path).
+struct OverrideModel
 {
-    return reinterpret_cast<std::vector<CantoOverride>*>(GetWindowLongPtrW(hDlg, DWLP_USER));
+    std::map<std::wstring, std::vector<CantoOverride>> byDict;
+    std::wstring curId;
+};
+
+static OverrideModel* ModelState(HWND hDlg)
+{
+    return reinterpret_cast<OverrideModel*>(GetWindowLongPtrW(hDlg, DWLP_USER));
+}
+
+// The override set for the dictionary currently selected, or null when none is
+// resolvable (Custom without a path).
+static std::vector<CantoOverride>* CurOverrides(HWND hDlg)
+{
+    OverrideModel* m = ModelState(hDlg);
+    if (!m || m->curId.empty())
+        return nullptr;
+    return &m->byDict[m->curId];
 }
 
 // Repopulates the list box from the model. The list order mirrors the model
@@ -175,10 +198,14 @@ static void RefreshOverrideList(HWND hDlg, int selectIndex)
 {
     HWND hList = GetDlgItem(hDlg, IDC_OVR_LIST);
     SendMessageW(hList, LB_RESETCONTENT, 0, 0);
-    for (const CantoOverride& ov : *Model(hDlg))
+    std::vector<CantoOverride>* cur = CurOverrides(hDlg);
+    if (cur)
     {
-        std::wstring line = ov.first + L"\t" + JoinTokens(ov.second);
-        SendMessageW(hList, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(line.c_str()));
+        for (const CantoOverride& ov : *cur)
+        {
+            std::wstring line = ov.first + L"\t" + JoinTokens(ov.second);
+            SendMessageW(hList, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(line.c_str()));
+        }
     }
     if (selectIndex >= 0)
         SendMessageW(hList, LB_SETCURSEL, selectIndex, 0);
@@ -189,7 +216,10 @@ static void OnOverrideSelChange(HWND hDlg)
     LRESULT sel = SendMessageW(GetDlgItem(hDlg, IDC_OVR_LIST), LB_GETCURSEL, 0, 0);
     if (sel == LB_ERR)
         return;
-    const std::vector<CantoOverride>& model = *Model(hDlg);
+    std::vector<CantoOverride>* curPtr = CurOverrides(hDlg);
+    if (!curPtr)
+        return;
+    const std::vector<CantoOverride>& model = *curPtr;
     if (sel < 0 || static_cast<size_t>(sel) >= model.size())
         return;
     SetDlgItemTextW(hDlg, IDC_OVR_KEY, model[sel].first.c_str());
@@ -211,7 +241,13 @@ static void OnOverrideAdd(HWND hDlg)
         return;
     }
 
-    std::vector<CantoOverride>& model = *Model(hDlg);
+    std::vector<CantoOverride>* curPtr = CurOverrides(hDlg);
+    if (!curPtr)
+    {
+        MessageBeep(MB_ICONWARNING);
+        return;
+    }
+    std::vector<CantoOverride>& model = *curPtr;
     auto it = std::find_if(model.begin(), model.end(),
                            [&](const CantoOverride& o) { return o.first == key; });
     if (it != model.end())
@@ -231,7 +267,13 @@ static void OnOverrideAdd(HWND hDlg)
 static void OnOverrideRemove(HWND hDlg)
 {
     LRESULT sel = SendMessageW(GetDlgItem(hDlg, IDC_OVR_LIST), LB_GETCURSEL, 0, 0);
-    std::vector<CantoOverride>& model = *Model(hDlg);
+    std::vector<CantoOverride>* curPtr = CurOverrides(hDlg);
+    if (!curPtr)
+    {
+        MessageBeep(MB_ICONWARNING);
+        return;
+    }
+    std::vector<CantoOverride>& model = *curPtr;
     if (sel == LB_ERR || sel < 0 || static_cast<size_t>(sel) >= model.size())
     {
         MessageBeep(MB_ICONWARNING);
@@ -245,6 +287,53 @@ static void OnOverrideRemove(HWND hDlg)
     if (next >= static_cast<int>(model.size()))
         next = static_cast<int>(model.size()) - 1;
     RefreshOverrideList(hDlg, next);
+}
+
+// The identity of the dictionary currently selected in the dialog (from the
+// mode dropdown and, for Custom, the path field). Empty when Custom has no path.
+static std::wstring DialogDictId(HWND hDlg)
+{
+    LRESULT mode = SendMessageW(GetDlgItem(hDlg, IDC_DICT_MODE), CB_GETCURSEL, 0, 0);
+    DictSource src = IndexToSource(mode);
+    std::wstring path;
+    if (src == DictSource::Custom)
+    {
+        wchar_t buf[MAX_PATH] = { 0 };
+        GetDlgItemTextW(hDlg, IDC_DICT_PATH, buf, MAX_PATH);
+        path = buf;
+    }
+    return DictionaryIdentity(src, path);
+}
+
+static void EnableOverrideControls(HWND hDlg, bool enable)
+{
+    for (int id : { IDC_OVR_LIST, IDC_OVR_KEY, IDC_OVR_CANDS,
+                    IDC_OVR_ADD, IDC_OVR_REMOVE })
+        EnableWindow(GetDlgItem(hDlg, id), enable);
+}
+
+// Re-scopes the override editor to the dictionary now selected in the dialog.
+// In-memory edits for the previously shown dictionary stay staged in the model
+// (CurOverrides mutates the map entry in place), so switching back and forth is
+// lossless; OK writes every touched set to its own dictionary.
+static void SyncOverrideDict(HWND hDlg)
+{
+    OverrideModel* m = ModelState(hDlg);
+    if (!m)
+        return;
+
+    std::wstring id = DialogDictId(hDlg);
+    if (id == m->curId)
+        return;
+
+    m->curId = id;
+    if (!id.empty() && m->byDict.find(id) == m->byDict.end())
+        m->byDict[id] = LoadOverrides(id); // lazy-load this dictionary's set
+
+    RefreshOverrideList(hDlg, -1);
+    SetDlgItemTextW(hDlg, IDC_OVR_KEY, L"");
+    SetDlgItemTextW(hDlg, IDC_OVR_CANDS, L"");
+    EnableOverrideControls(hDlg, !id.empty());
 }
 
 // --- Resizable-layout support ------------------------------------------------
@@ -353,10 +442,16 @@ static INT_PTR CALLBACK DlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM lPara
         FillToggleCombo(GetDlgItem(hDlg, IDC_TOGGLE), s.toggleKey);
         FillFontCombo(GetDlgItem(hDlg, IDC_FONTSIZE), s.fontSize);
 
-        // Working copy of the overrides; freed in WM_DESTROY.
-        SetWindowLongPtrW(hDlg, DWLP_USER,
-            reinterpret_cast<LONG_PTR>(new std::vector<CantoOverride>(LoadOverrides())));
+        // Per-dictionary working copy of the overrides; freed in WM_DESTROY.
+        // Load the initially-selected dictionary's set; others load lazily as
+        // the user switches dictionaries (see SyncOverrideDict).
+        OverrideModel* m = new OverrideModel();
+        m->curId = DictionaryIdentity(s.dictSource, s.dictionaryPath);
+        if (!m->curId.empty())
+            m->byDict[m->curId] = LoadOverrides(m->curId);
+        SetWindowLongPtrW(hDlg, DWLP_USER, reinterpret_cast<LONG_PTR>(m));
         RefreshOverrideList(hDlg, -1);
+        EnableOverrideControls(hDlg, !m->curId.empty());
         InitLayout(hDlg);
         return TRUE;
     }
@@ -396,17 +491,25 @@ static INT_PTR CALLBACK DlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM lPara
 
         case IDC_DICT_MODE:
             if (HIWORD(wParam) == CBN_SELCHANGE)
+            {
                 UpdateDictControls(hDlg);
+                SyncOverrideDict(hDlg); // show the newly-selected dictionary's set
+            }
             return TRUE;
 
         case IDC_DICT_PATH:
             // Re-check the OK button as the custom path is typed/cleared/browsed.
             if (HIWORD(wParam) == EN_CHANGE)
                 UpdateDictControls(hDlg);
+            // Re-scope the overrides once, when the path edit is done (not per
+            // keystroke), so each distinct custom path gets its own set.
+            else if (HIWORD(wParam) == EN_KILLFOCUS)
+                SyncOverrideDict(hDlg);
             return TRUE;
 
         case IDC_BROWSE:
             OnBrowse(hDlg);
+            SyncOverrideDict(hDlg); // a chosen file is a new dictionary identity
             return TRUE;
 
         case IDOK:
@@ -439,8 +542,11 @@ static INT_PTR CALLBACK DlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM lPara
                 s.fontSize = static_cast<int>(font);
 
             SaveSettings(s);
-            if (std::vector<CantoOverride>* model = Model(hDlg))
-                SaveOverrides(*model);
+            // Persist every dictionary's override set the user touched this
+            // session, each under its own dictionary identity.
+            if (OverrideModel* m = ModelState(hDlg))
+                for (const auto& kv : m->byDict)
+                    SaveOverrides(kv.first, kv.second);
             EndDialog(hDlg, IDOK);
             return TRUE;
         }
@@ -452,7 +558,7 @@ static INT_PTR CALLBACK DlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM lPara
         return FALSE;
 
     case WM_DESTROY:
-        delete Model(hDlg);
+        delete ModelState(hDlg);
         SetWindowLongPtrW(hDlg, DWLP_USER, 0);
         delete reinterpret_cast<DlgLayout*>(GetPropW(hDlg, L"CantoDlgLayout"));
         RemovePropW(hDlg, L"CantoDlgLayout");

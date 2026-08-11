@@ -1527,7 +1527,8 @@ void CTextService::ApplySettings()
     // file is the clean way to apply removals, so overrides funnel through the
     // same (background) load path.
     std::wstring path = ResolveDictionaryPath();
-    std::vector<CantoOverride> overrides = LoadOverrides();
+    std::vector<CantoOverride> overrides =
+        LoadOverrides(DictionaryIdentity(s.dictSource, s.dictionaryPath));
     if (path != m_dictPathLoaded || overrides != m_overrides)
     {
         m_overrides = std::move(overrides);
