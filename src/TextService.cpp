@@ -272,8 +272,10 @@ void CTextService::AddLangBarButtons()
             return std::wstring(m_chineseMode ? L"Chinese mode" : L"English mode");
         });
         m_pModeButton->SetOnClick([this] { ToggleInputMode(); });
-        // Right-click opens the settings context menu (like Microsoft Quick).
-        m_pModeButton->SetOnRightClick([this](POINT pt) { ShowSettingsMenu(pt); });
+        // Right-click opens the settings context menu (like Microsoft Quick); the
+        // language bar delivers right-click through InitMenu -> this callback.
+        m_pModeButton->SetMenu([this](ITfMenu* pMenu) { BuildSettingsMenu(pMenu); });
+        m_pModeButton->SetOnMenuSelect([this](UINT id) { ApplyMenuChoice(id); });
         pMgr->AddItem(m_pModeButton);
     }
 
@@ -1482,59 +1484,63 @@ enum {
     kFontBase = 300, // id = kFontBase + point size
 };
 
-void CTextService::ShowSettingsMenu(POINT pt)
+// Builds the right-click settings menu via ITfMenu (submenus + radio checks).
+// The language bar calls this through InitMenu when the button is right-clicked.
+void CTextService::BuildSettingsMenu(ITfMenu* pMenu)
 {
     CantoSettings s = LoadSettings();
-    const UINT rc = MF_STRING;
 
-    HMENU hDict = CreatePopupMenu();
-    AppendMenuW(hDict, rc | (s.dictSource == DictSource::StockTraditional ? MF_CHECKED : 0),
-                kDictTrad, L"Stock Traditional Chinese dictionary");
-    AppendMenuW(hDict, rc | (s.dictSource == DictSource::StockSimplified ? MF_CHECKED : 0),
-                kDictSimp, L"Stock Simplified Chinese dictionary");
-    AppendMenuW(hDict, rc | (s.dictSource == DictSource::Custom ? MF_CHECKED : 0),
-                kDictCustom, L"Custom…"); // Custom…
+    auto item = [](ITfMenu* m, UINT id, const wchar_t* text, bool checked)
+    {
+        m->AddMenuItem(id, checked ? TF_LBMENUF_RADIOCHECKED : 0, nullptr, nullptr,
+                       text, static_cast<ULONG>(wcslen(text)), nullptr);
+    };
+    auto submenu = [](ITfMenu* m, const wchar_t* text) -> ITfMenu*
+    {
+        ITfMenu* sub = nullptr;
+        m->AddMenuItem(0, TF_LBMENUF_SUBMENU, nullptr, nullptr,
+                       text, static_cast<ULONG>(wcslen(text)), &sub);
+        return sub;
+    };
 
-    HMENU hTog = CreatePopupMenu();
-    AppendMenuW(hTog, rc | (s.toggleKey == ToggleKeyMode::Both ? MF_CHECKED : 0),
-                kTogBoth, L"Both shifts");
-    AppendMenuW(hTog, rc | (s.toggleKey == ToggleKeyMode::LeftShift ? MF_CHECKED : 0),
-                kTogLeft, L"Left Shift");
-    AppendMenuW(hTog, rc | (s.toggleKey == ToggleKeyMode::RightShift ? MF_CHECKED : 0),
-                kTogRight, L"Right Shift");
-    AppendMenuW(hTog, rc | (s.toggleKey == ToggleKeyMode::Neither ? MF_CHECKED : 0),
-                kTogNeither, L"Neither");
+    if (ITfMenu* d = submenu(pMenu, L"Dictionary"))
+    {
+        item(d, kDictTrad,   L"Stock Traditional Chinese dictionary", s.dictSource == DictSource::StockTraditional);
+        item(d, kDictSimp,   L"Stock Simplified Chinese dictionary",  s.dictSource == DictSource::StockSimplified);
+        item(d, kDictCustom, L"Custom…", s.dictSource == DictSource::Custom);
+        d->Release();
+    }
+    if (ITfMenu* t = submenu(pMenu, L"Chinese/English toggle key"))
+    {
+        item(t, kTogBoth,    L"Both shifts", s.toggleKey == ToggleKeyMode::Both);
+        item(t, kTogLeft,    L"Left Shift",  s.toggleKey == ToggleKeyMode::LeftShift);
+        item(t, kTogRight,   L"Right Shift", s.toggleKey == ToggleKeyMode::RightShift);
+        item(t, kTogNeither, L"Neither",     s.toggleKey == ToggleKeyMode::Neither);
+        t->Release();
+    }
+    if (ITfMenu* f = submenu(pMenu, L"Candidate font size"))
+    {
+        static const int kSizes[] = { 12, 14, 16, 18, 20, 24, 28, 32, 36, 48 };
+        for (int sz : kSizes)
+            item(f, static_cast<UINT>(kFontBase + sz), std::to_wstring(sz).c_str(), s.fontSize == sz);
+        f->Release();
+    }
+}
 
-    HMENU hFont = CreatePopupMenu();
-    static const int kSizes[] = { 12, 14, 16, 18, 20, 24, 28, 32, 36, 48 };
-    for (int sz : kSizes)
-        AppendMenuW(hFont, rc | (s.fontSize == sz ? MF_CHECKED : 0),
-                    kFontBase + sz, std::to_wstring(sz).c_str());
-
-    HMENU hTop = CreatePopupMenu();
-    AppendMenuW(hTop, MF_POPUP, reinterpret_cast<UINT_PTR>(hDict), L"Dictionary");
-    AppendMenuW(hTop, MF_POPUP, reinterpret_cast<UINT_PTR>(hTog),  L"Chinese/English toggle key");
-    AppendMenuW(hTop, MF_POPUP, reinterpret_cast<UINT_PTR>(hFont), L"Candidate font size");
-
-    HWND hOwner = GetForegroundWindow();
-    if (!hOwner) hOwner = m_hMsgWnd;
-    SetForegroundWindow(hOwner); // so the menu dismisses on click-away
-    UINT cmd = static_cast<UINT>(TrackPopupMenu(
-        hTop, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
-        pt.x, pt.y, 0, hOwner, nullptr));
-    PostMessageW(hOwner, WM_NULL, 0, 0);
-    DestroyMenu(hTop); // also destroys the attached submenus
-
-    if (cmd == 0)
-        return; // dismissed
-
+// Applies a chosen settings-menu item (from OnMenuSelect), live.
+void CTextService::ApplyMenuChoice(UINT id)
+{
+    CantoSettings s = LoadSettings();
     bool changed = true;
-    switch (cmd)
+
+    switch (id)
     {
     case kDictTrad:    s.dictSource = DictSource::StockTraditional; break;
     case kDictSimp:    s.dictSource = DictSource::StockSimplified;  break;
     case kDictCustom:
     {
+        HWND hOwner = GetForegroundWindow();
+        if (!hOwner) hOwner = m_hMsgWnd;
         wchar_t path[MAX_PATH] = { 0 };
         if (!s.dictionaryPath.empty())
             wcsncpy_s(path, s.dictionaryPath.c_str(), _TRUNCATE);
@@ -1558,8 +1564,8 @@ void CTextService::ShowSettingsMenu(POINT pt)
     case kTogRight:   s.toggleKey = ToggleKeyMode::RightShift; break;
     case kTogNeither: s.toggleKey = ToggleKeyMode::Neither;    break;
     default:
-        if (cmd > kFontBase && cmd <= kFontBase + 72)
-            s.fontSize = static_cast<int>(cmd) - kFontBase;
+        if (id > kFontBase && id <= kFontBase + 72)
+            s.fontSize = static_cast<int>(id) - kFontBase;
         else
             changed = false;
         break;

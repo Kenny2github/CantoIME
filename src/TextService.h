@@ -22,6 +22,7 @@
 
 #include <msctf.h>
 #include <ctffunc.h>   // ITfFunctionProvider / ITfFunction / ITfFnConfigure
+#include <ctfutb.h>    // ITfMenu (settings context menu)
 #include <string>
 #include <vector>
 
@@ -188,8 +189,10 @@ private:
     void ToggleInputMode(); // flip Chinese/English, commit any composition first
     void RefreshLangBarIcons(); // re-query button icons (e.g. on a theme change)
     // Right-click context menu on the mode button: all settings live here
-    // (dictionary, toggle key, font size), applied live on selection.
-    void ShowSettingsMenu(POINT pt);
+    // (dictionary, toggle key, font size). BuildSettingsMenu populates it via
+    // ITfMenu (from InitMenu); ApplyMenuChoice applies a selection live.
+    void BuildSettingsMenu(ITfMenu* pMenu);
+    void ApplyMenuChoice(UINT id);
 
     // Lone-Shift detection. TSF does not reliably deliver modifier-only keys to
     // the key-event sink, so a low-level keyboard hook watches Shift instead and

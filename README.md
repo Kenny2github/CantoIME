@@ -109,13 +109,17 @@ DLL; no `%APPDATA%` and no registry path search are used.
 
 ### Options (right-click the 中/英 mode button)
 
-**Right-click the 中/英 input-mode button** in the taskbar (system tray) while
-CantoIME is active to open a context menu with all settings (like Microsoft
-Quick). Left-click that button toggles Chinese/English; right-click configures it.
-(Windows' Settings → "Keyboard options" is reserved for Microsoft's in-box IMEs;
-a third-party TIP cannot appear there, so the tray button's context menu is the
-entry point, as with other third-party IMEs. CantoIME also implements
-`ITfFnConfigure`, so the legacy input-method dialog opens the same settings.)
+**Right-click the 中/英 input-mode button** to open a context menu with all settings
+(like Microsoft Quick), built via `ITfLangBarItemButton::InitMenu`. Left-click that
+button toggles Chinese/English; right-click configures it.
+
+> **Windows 11 note:** that right-click menu is delivered through the **desktop
+> Language Bar**, which Win11 hides by default. Enable it once under **Settings →
+> Time & language → Typing → Advanced keyboard settings → "Use the desktop Language
+> Bar when it's available"** (and set the Language Bar to *Docked/Floating*, not
+> *Hidden*). Windows' Settings → "Keyboard options" is Microsoft-in-box-IME-only, so
+> a third-party TIP cannot surface config there. CantoIME also implements
+> `ITfFnConfigure`, so the legacy input-method dialog opens the same settings.
 
 The context menu (and the equivalent dialog) edit three per-user settings, stored
 in `HKCU\Software\CantoIME`:

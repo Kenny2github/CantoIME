@@ -54,7 +54,10 @@ HICON MakeGlyphIcon(const std::wstring& glyph)
     HBITMAP oldBmp = static_cast<HBITMAP>(SelectObject(hdcMem, hDib));
 
     LOGFONTW lf = { 0 };
-    lf.lfHeight  = -(cy - 1);
+    // Overscan the cell so the CJK ink (which sits inside the em box with built-in
+    // bearing) fills the icon like Microsoft Quick's, rather than looking small.
+    // DT_NOCLIP + DT_VCENTER keep it centered; a small overflow is absorbed.
+    lf.lfHeight  = -(cy + cy / 5);
     lf.lfWeight  = FW_NORMAL;
     lf.lfCharSet = DEFAULT_CHARSET;
     lf.lfQuality = ANTIALIASED_QUALITY; // grayscale AA (no ClearType colour fringe)
@@ -210,23 +213,26 @@ STDMETHODIMP CLangBarButton::GetTooltipString(BSTR* pbstrToolTip)
 
 // ---- ITfLangBarItemButton ----
 
-STDMETHODIMP CLangBarButton::OnClick(TfLBIClick click, POINT pt, const RECT* /*prcArea*/)
+STDMETHODIMP CLangBarButton::OnClick(TfLBIClick click, POINT /*pt*/, const RECT* /*prcArea*/)
 {
     if (click == TF_LBI_CLK_LEFT && m_onClick)
         m_onClick();
-    else if (click == TF_LBI_CLK_RIGHT && m_onRightClick)
-        m_onRightClick(pt);
     return S_OK;
 }
 
-STDMETHODIMP CLangBarButton::InitMenu(ITfMenu* /*pMenu*/)
+STDMETHODIMP CLangBarButton::InitMenu(ITfMenu* pMenu)
 {
-    return E_NOTIMPL; // context menu is handled in OnClick via TrackPopupMenu
+    if (!m_menu || pMenu == nullptr)
+        return E_NOTIMPL;
+    m_menu(pMenu);
+    return S_OK;
 }
 
-STDMETHODIMP CLangBarButton::OnMenuSelect(UINT /*wID*/)
+STDMETHODIMP CLangBarButton::OnMenuSelect(UINT wID)
 {
-    return E_NOTIMPL;
+    if (m_onMenuSelect)
+        m_onMenuSelect(wID);
+    return S_OK;
 }
 
 STDMETHODIMP CLangBarButton::GetIcon(HICON* phIcon)
