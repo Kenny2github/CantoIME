@@ -26,6 +26,8 @@
 #include "TextService.h"
 #include "EditSession.h"
 #include "LangBarButton.h"
+#include "OptionsDialog.h"
+#include "Settings.h"
 
 #include <msctf.h>
 #include <ctffunc.h>   // ITfContextView / display helpers live in msctf; kept for completeness
@@ -33,6 +35,7 @@
 #include <unordered_set>
 #include <functional>
 #include <algorithm>
+#include <string>
 
 // Statics backing the low-level mouse wheel hook.
 HHOOK         CTextService::s_wheelHook  = nullptr;
@@ -44,7 +47,8 @@ CTextService* CTextService::s_kbdOwner = nullptr;
 
 // Posted from the keyboard hook to the message-only window to run the toggle on
 // the UI thread.
-static const UINT WM_CANTO_TOGGLE = WM_APP + 0x101;
+static const UINT WM_CANTO_TOGGLE  = WM_APP + 0x101;
+static const UINT WM_CANTO_OPTIONS = WM_APP + 0x102; // open the options dialog
 static const wchar_t* kMsgWndClass = L"CantoIME_" CANTO_VARIANT_TAG L"_MsgWnd";
 
 static bool IsShiftVK(WPARAM vk); // defined with the key-handling helpers below
@@ -157,9 +161,6 @@ STDMETHODIMP CTextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD 
     if (!InitKeyEventSink())
         goto fail;
 
-    // Load the dictionary at activation using the documented search order.
-    m_dict.Load(ResolveDictionaryPath());
-
     // Prepare (but do not show) the candidate window, and route candidate
     // clicks back to us so a mouse click accepts that candidate.
     m_candWnd.EnsureCreated();
@@ -167,6 +168,9 @@ STDMETHODIMP CTextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD 
     {
         OnCandidateClicked(globalIndex);
     });
+
+    // Apply per-user settings: candidate font size + load the selected dictionary.
+    ApplySettings();
 
     // Add the language-bar buttons (main 粵 icon + 中/英 input-mode toggle).
     AddLangBarButtons();
@@ -255,7 +259,9 @@ void CTextService::AddLangBarButtons()
         m_pModeButton->SetTooltip([this] {
             return std::wstring(m_chineseMode ? L"Chinese mode" : L"English mode");
         });
-        m_pModeButton->SetOnClick([this] { ToggleInputMode(); });
+        // Single-click toggles input mode; double-click opens the settings dialog
+        // (the only settings path, and the one that works in the modern Win11 tray).
+        m_pModeButton->SetOnClick([this] { OnModeButtonClick(); });
         pMgr->AddItem(m_pModeButton);
     }
 
@@ -276,6 +282,31 @@ void CTextService::RemoveLangBarButtons()
 
     if (m_pMainButton) { m_pMainButton->Release(); m_pMainButton = nullptr; }
     if (m_pModeButton) { m_pModeButton->Release(); m_pModeButton = nullptr; }
+}
+
+// Mode button click handler. Single-click toggles input mode. A double-click
+// (two clicks within the system double-click time) toggles twice -- net no
+// change -- and opens the settings dialog, so a double-click leaves the mode as
+// it was and just shows settings. This is the reliable settings path in the
+// modern Win11 tray (where an extra button is not shown).
+void CTextService::OnModeButtonClick()
+{
+    DWORD now = GetTickCount();
+    bool isDouble = (m_lastModeClickTick != 0) &&
+                    (now - m_lastModeClickTick <= GetDoubleClickTime());
+
+    ToggleInputMode();
+
+    if (isDouble)
+    {
+        m_lastModeClickTick = 0;
+        if (m_hMsgWnd)
+            PostMessageW(m_hMsgWnd, WM_CANTO_OPTIONS, 0, 0);
+    }
+    else
+    {
+        m_lastModeClickTick = now;
+    }
 }
 
 // Flips between Chinese and English input. Any in-flight composition is
@@ -309,6 +340,14 @@ LRESULT CALLBACK CTextService::MsgWndProc(HWND hWnd, UINT msg, WPARAM wParam, LP
     case WM_CANTO_TOGGLE:
         if (self)
             self->ToggleInputMode();
+        return 0;
+
+    case WM_CANTO_OPTIONS:
+        // Run the modal dialog from the message loop, not inside the langbar
+        // click callback (avoids reentrancy). Apply the new settings immediately
+        // on OK so they take effect without switching away and back.
+        if (self && ShowOptionsDialog(nullptr))
+            self->ApplySettings();
         return 0;
 
     // Light/dark theme switched: WM_SETTINGCHANGE carries "ImmersiveColorSet".
@@ -403,11 +442,13 @@ LRESULT CALLBACK CTextService::LowLevelKeyboardProc(int code, WPARAM wParam, LPA
         {
             if (isShift)
             {
-                // First press (ignore auto-repeat): arm the lone-Shift toggle.
+                // First press (ignore auto-repeat): arm the lone-Shift toggle and
+                // remember which shift it was (for the Left/Right/Both setting).
                 if (!s_kbdOwner->m_kbShiftDown)
                 {
                     s_kbdOwner->m_kbShiftDown = true;
                     s_kbdOwner->m_kbShiftLone = true;
+                    s_kbdOwner->m_kbShiftVk   = p->vkCode;
                 }
             }
             else
@@ -420,10 +461,11 @@ LRESULT CALLBACK CTextService::LowLevelKeyboardProc(int code, WPARAM wParam, LPA
             if (isShift)
             {
                 const bool lone = s_kbdOwner->m_kbShiftLone;
+                const DWORD vk  = s_kbdOwner->m_kbShiftVk;
                 s_kbdOwner->m_kbShiftDown = false;
                 s_kbdOwner->m_kbShiftLone = false;
-                // Run the toggle on the UI thread, not inside this hook.
-                if (lone && s_kbdOwner->m_hMsgWnd)
+                // Only the configured shift(s) toggle; run it on the UI thread.
+                if (lone && s_kbdOwner->ToggleKeyMatches(vk) && s_kbdOwner->m_hMsgWnd)
                     PostMessageW(s_kbdOwner->m_hMsgWnd, WM_CANTO_TOGGLE, 0, 0);
             }
         }
@@ -522,8 +564,12 @@ STDMETHODIMP CTextService::OnSetFocus(ITfDocumentMgr* /*pdimFocus*/, ITfDocument
 // ITfKeyEventSink
 // ---------------------------------------------------------------------------
 
-STDMETHODIMP CTextService::OnSetFocus(BOOL /*fForeground*/)
+STDMETHODIMP CTextService::OnSetFocus(BOOL fForeground)
 {
+    // Re-read settings on gaining focus so "Keyboard options" changes (dictionary
+    // choice, font size) take effect without a sign-out.
+    if (fForeground)
+        ApplySettings();
     return S_OK;
 }
 
@@ -1433,4 +1479,34 @@ HRESULT CTextService::DoCancelComposition(TfEditCookie ec, ITfContext* pic)
 void CTextService::EndComposition(ITfContext* pic)
 {
     CancelComposition(pic);
+}
+
+// ---------------------------------------------------------------------------
+// Per-user settings (HKCU): candidate font size + selected dictionary
+// ---------------------------------------------------------------------------
+
+bool CTextService::ToggleKeyMatches(DWORD vk) const
+{
+    switch (m_toggleKey)
+    {
+    case ToggleKeyMode::Both:       return vk == VK_LSHIFT || vk == VK_RSHIFT;
+    case ToggleKeyMode::LeftShift:  return vk == VK_LSHIFT;
+    case ToggleKeyMode::RightShift: return vk == VK_RSHIFT;
+    default:                        return false; // Neither
+    }
+}
+
+void CTextService::ApplySettings()
+{
+    CantoSettings s = LoadSettings();
+    m_candWnd.SetFontSize(s.fontSize);
+    m_toggleKey = s.toggleKey;
+
+    // Reload the dictionary only if the resolved path actually changed.
+    std::wstring path = ResolveDictionaryPath();
+    if (path != m_dictPathLoaded)
+    {
+        m_dict.Load(path);
+        m_dictPathLoaded = path;
+    }
 }

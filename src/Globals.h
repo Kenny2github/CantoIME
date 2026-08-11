@@ -25,9 +25,11 @@
 // Variant selection
 // ---------------------------------------------------------------------------
 
-// Exactly one CANTO_VARIANT_* must be defined. Default to Hong Kong SAR when
-// the build did not specify one (e.g. a plain single-target compile).
-#if !defined(CANTO_VARIANT_HK) && !defined(CANTO_VARIANT_TW) && !defined(CANTO_VARIANT_MO)
+// Exactly one CANTO_VARIANT_* must be defined. Traditional: HK/TW/MO. Simplified:
+// CN/SG. Default to Hong Kong SAR when the build did not specify one.
+#if !defined(CANTO_VARIANT_HK) && !defined(CANTO_VARIANT_TW) && \
+    !defined(CANTO_VARIANT_MO) && !defined(CANTO_VARIANT_CN) && \
+    !defined(CANTO_VARIANT_SG)
 #  define CANTO_VARIANT_HK
 #endif
 
@@ -40,6 +42,20 @@
 #elif defined(CANTO_VARIANT_MO)
 #  define TEXTSERVICE_LANGID  MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_MACAU)       // 0x1404
 #  define CANTO_VARIANT_TAG   L"MO"
+#elif defined(CANTO_VARIANT_CN)
+#  define TEXTSERVICE_LANGID  MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED)  // 0x0804
+#  define CANTO_VARIANT_TAG   L"CN"
+#elif defined(CANTO_VARIANT_SG)
+#  define TEXTSERVICE_LANGID  MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_SINGAPORE)   // 0x1004
+#  define CANTO_VARIANT_TAG   L"SG"
+#endif
+
+// 1 for Simplified variants (CN/SG), else 0. Selects the default stock dictionary
+// when the user has not chosen one (see Settings / ResolveDictionaryPath).
+#if defined(CANTO_VARIANT_CN) || defined(CANTO_VARIANT_SG)
+#  define CANTO_IS_SIMPLIFIED 1
+#else
+#  define CANTO_IS_SIMPLIFIED 0
 #endif
 
 // Display name shown in the input switcher. The variant is already conveyed by
@@ -67,13 +83,17 @@ extern const GUID GUID_CantoMainButton;
 // Icon index used when registering the profile (0 = default/no icon).
 #define TEXTSERVICE_ICON_INDEX 0
 
-// Registry root for our own settings (dictionary path override). Shared across
-// variants: they all read the same dictionary.
+// Registry root for our per-user settings (dictionary choice, candidate font).
+// Shared across variants. The "Keyboard options" dialog writes here (see Settings).
 #define CANTO_REG_SUBKEY    L"Software\\CantoIME"
-#define CANTO_REG_DICTVALUE L"DictionaryPath"
 
-// Default dictionary file name shipped next to the DLL.
-#define CANTO_DICT_FILENAME L"dictionary.txt"
+// Stock dictionaries shipped next to the DLL. traditional.txt is the default for
+// Traditional variants, simplified.txt for Simplified variants.
+#define CANTO_DICT_FILENAME   L"traditional.txt"
+#define CANTO_DICT_SIMPLIFIED L"simplified.txt"
+
+// Default candidate window font cell height, in pixels.
+#define CANTO_DEFAULT_FONT_SIZE 18
 
 // Maximum candidates shown at once (number keys 1..9).
 #define CANTO_MAX_CANDIDATES 9
@@ -96,5 +116,7 @@ void DllRelease();
 // Returns the directory containing the loaded DLL (with trailing backslash).
 std::wstring GetModuleDirectory();
 
-// Returns the full resolved dictionary path using the documented search order.
+// Resolves the dictionary path from the Dictionary setting (the sole selector):
+// Stock Traditional -> traditional.txt, Stock Simplified -> simplified.txt (both
+// next to the DLL), Custom -> the configured path. See Settings.
 std::wstring ResolveDictionaryPath();

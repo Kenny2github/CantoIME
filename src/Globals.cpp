@@ -3,7 +3,7 @@
 // Definitions of the shared globals declared in Globals.h.
 
 #include "Globals.h"
-#include <shlobj.h>   // SHGetFolderPath for %APPDATA%
+#include "Settings.h"
 #include <string>
 
 // Per-variant COM identity. Each Traditional Chinese variant is a separate
@@ -29,6 +29,20 @@ const CLSID CLSID_CantoIME =
 // {2CB45F66-00A5-418C-8354-87AC7B7C8C85}
 const GUID GUID_Profile =
     { 0x2CB45F66, 0x00A5, 0x418C, { 0x83, 0x54, 0x87, 0xAC, 0x7B, 0x7C, 0x8C, 0x85 } };
+#elif defined(CANTO_VARIANT_CN)
+// {7C5C8388-430C-4C15-8A87-78A0BB9A482B}
+const CLSID CLSID_CantoIME =
+    { 0x7C5C8388, 0x430C, 0x4C15, { 0x8A, 0x87, 0x78, 0xA0, 0xBB, 0x9A, 0x48, 0x2B } };
+// {1307330C-CDBA-484F-891F-FEB4595D437D}
+const GUID GUID_Profile =
+    { 0x1307330C, 0xCDBA, 0x484F, { 0x89, 0x1F, 0xFE, 0xB4, 0x59, 0x5D, 0x43, 0x7D } };
+#elif defined(CANTO_VARIANT_SG)
+// {B551180B-E874-4B04-8B8F-3F16344AD683}
+const CLSID CLSID_CantoIME =
+    { 0xB551180B, 0xE874, 0x4B04, { 0x8B, 0x8F, 0x3F, 0x16, 0x34, 0x4A, 0xD6, 0x83 } };
+// {43CCFF03-2E82-4938-88CB-15D4CBE069A7}
+const GUID GUID_Profile =
+    { 0x43CCFF03, 0x2E82, 0x4938, { 0x88, 0xCB, 0x15, 0xD4, 0xCB, 0xE0, 0x69, 0xA7 } };
 #endif
 
 // Shared across variants (the language-bar item is keyed by the per-variant
@@ -65,69 +79,32 @@ std::wstring GetModuleDirectory()
     return dir.substr(0, slash + 1);
 }
 
-// Reads a REG_SZ value from either HKCU or HKLM. Returns true on success.
-static bool ReadRegString(HKEY root, const wchar_t* subkey, const wchar_t* value, std::wstring& out)
+// Expands environment variables (e.g. %APPDATA%) in a path. Returns the input
+// unchanged if expansion fails or would overflow.
+static std::wstring ExpandEnv(const std::wstring& s)
 {
-    HKEY hKey = nullptr;
-    if (RegOpenKeyExW(root, subkey, 0, KEY_READ | KEY_WOW64_64KEY, &hKey) != ERROR_SUCCESS)
-        return false;
-
     wchar_t buf[MAX_PATH] = { 0 };
-    DWORD cb = sizeof(buf);
-    DWORD type = 0;
-    LONG rc = RegQueryValueExW(hKey, value, nullptr, &type,
-                               reinterpret_cast<LPBYTE>(buf), &cb);
-    RegCloseKey(hKey);
-
-    if (rc != ERROR_SUCCESS || type != REG_SZ)
-        return false;
-
-    out.assign(buf);
-    return !out.empty();
-}
-
-static bool FileExists(const std::wstring& path)
-{
-    if (path.empty())
-        return false;
-    DWORD attr = GetFileAttributesW(path.c_str());
-    return (attr != INVALID_FILE_ATTRIBUTES) && !(attr & FILE_ATTRIBUTE_DIRECTORY);
+    DWORD n = ExpandEnvironmentStringsW(s.c_str(), buf, MAX_PATH);
+    if (n == 0 || n > MAX_PATH)
+        return s;
+    return std::wstring(buf);
 }
 
 std::wstring ResolveDictionaryPath()
 {
-    std::wstring path;
+    // The Dictionary setting is the sole selector (no registry search, no
+    // %APPDATA%). Stock choices map to the bundled file next to the DLL; Custom
+    // maps to the configured path. Load yields no candidates if it is missing.
+    CantoSettings settings = LoadSettings();
 
-    // (1) Registry override: prefer HKCU, then HKLM.
-    if (ReadRegString(HKEY_CURRENT_USER, CANTO_REG_SUBKEY, CANTO_REG_DICTVALUE, path) &&
-        FileExists(path))
-        return path;
-    if (ReadRegString(HKEY_LOCAL_MACHINE, CANTO_REG_SUBKEY, CANTO_REG_DICTVALUE, path) &&
-        FileExists(path))
-        return path;
+    if (settings.dictSource == DictSource::Custom)
+        return ExpandEnv(settings.dictionaryPath);
 
-    // (2) dictionary.txt next to the DLL.
     std::wstring dir = GetModuleDirectory();
-    if (!dir.empty())
-    {
-        std::wstring candidate = dir + CANTO_DICT_FILENAME;
-        if (FileExists(candidate))
-            return candidate;
-    }
+    if (dir.empty())
+        return std::wstring();
 
-    // (3) %APPDATA%\CantoIME\dictionary.txt
-    wchar_t appdata[MAX_PATH] = { 0 };
-    if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, appdata)))
-    {
-        std::wstring candidate = std::wstring(appdata) + L"\\CantoIME\\" + CANTO_DICT_FILENAME;
-        if (FileExists(candidate))
-            return candidate;
-    }
-
-    // Nothing found: return the DLL-adjacent path as a best-effort default so
-    // the caller has a stable place to look. Dictionary load will simply yield
-    // no candidates if the file is missing.
-    if (!dir.empty())
-        return dir + CANTO_DICT_FILENAME;
-    return std::wstring();
+    return dir + (settings.dictSource == DictSource::StockSimplified
+                      ? CANTO_DICT_SIMPLIFIED
+                      : CANTO_DICT_FILENAME);
 }

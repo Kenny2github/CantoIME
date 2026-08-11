@@ -18,6 +18,7 @@
 #include "Globals.h"
 #include "Dictionary.h"
 #include "CandidateWindow.h"
+#include "Settings.h"   // ToggleKeyMode
 
 #include <msctf.h>
 #include <string>
@@ -172,6 +173,10 @@ private:
 
     void ToggleInputMode(); // flip Chinese/English, commit any composition first
     void RefreshLangBarIcons(); // re-query button icons (e.g. on a theme change)
+    // Mode-button click: single-click toggles; a double-click (net no toggle)
+    // opens the settings dialog. Reliable in the modern Win11 tray.
+    void OnModeButtonClick();
+    DWORD m_lastModeClickTick = 0;
 
     // Lone-Shift detection. TSF does not reliably deliver modifier-only keys to
     // the key-event sink, so a low-level keyboard hook watches Shift instead and
@@ -180,6 +185,11 @@ private:
     HWND  m_hMsgWnd     = nullptr;
     bool  m_kbShiftDown = false; // Shift is currently held
     bool  m_kbShiftLone = false; // no other key pressed since Shift went down
+    DWORD m_kbShiftVk   = 0;     // which shift (VK_LSHIFT/RSHIFT) is being tracked
+    // Which shift(s) toggle mode (from settings). Neither disables the shift
+    // toggle (the 中/英 button still works).
+    ToggleKeyMode m_toggleKey = ToggleKeyMode::Both;
+    bool  ToggleKeyMatches(DWORD vk) const;
     void CreateMsgWindow();
     void DestroyMsgWindow();
     static LRESULT CALLBACK MsgWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -198,6 +208,12 @@ private:
 
     Dictionary      m_dict;
     CandidateWindow m_candWnd;
+
+    // Applies per-user settings (HKCU): candidate font size, and the dictionary
+    // (reloaded only if the resolved path changed). Called at activation and when
+    // the IME regains focus, so options-dialog changes take effect promptly.
+    void ApplySettings();
+    std::wstring m_dictPathLoaded; // resolved path of the currently-loaded dict
 
     // Active service for the low-level mouse hook (one composition at a time).
     static HHOOK          s_wheelHook;

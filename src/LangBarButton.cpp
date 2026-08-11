@@ -35,43 +35,89 @@ HICON MakeGlyphIcon(const std::wstring& glyph)
     const bool dark = SystemUsesDarkTheme();
     const int  tone = dark ? 240 : 16;
 
-    // 32-bit top-down DIB so we own the alpha channel and get clean, halo-free
-    // anti-aliasing (the old 1-bit mask left grey edge pixels as a white fringe).
-    BITMAPINFO bmi = { 0 };
-    bmi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth       = cx;
-    bmi.bmiHeader.biHeight      = -cy; // top-down
-    bmi.bmiHeader.biPlanes      = 1;
-    bmi.bmiHeader.biBitCount    = 32;
-    bmi.bmiHeader.biCompression = BI_RGB;
+    // Target ink HEIGHT at the final size: ~14px in a 16px cell, scaled with the
+    // cell so it holds at higher DPI.
+    const int targetH = cy * 14 / 16;
 
+    // Supersample: render large, then box-downscale for smooth anti-aliasing.
+    // Rendering straight at ~12px gave jagged edges; a 4x render + HALFTONE
+    // shrink matches Quick's smoothness.
+    const int SS = 4;
+    const int bw = cx * SS, bh = cy * SS;
+
+    auto makeDib = [](HDC dc, int w, int h, void** bitsOut) -> HBITMAP
+    {
+        BITMAPINFO bmi = { 0 };
+        bmi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+        bmi.bmiHeader.biWidth       = w;
+        bmi.bmiHeader.biHeight      = -h; // top-down
+        bmi.bmiHeader.biPlanes      = 1;
+        bmi.bmiHeader.biBitCount    = 32;
+        bmi.bmiHeader.biCompression = BI_RGB;
+        return CreateDIBSection(dc, &bmi, DIB_RGB_COLORS, bitsOut, nullptr, 0);
+    };
+
+    HDC hdcBig = CreateCompatibleDC(nullptr);
+    void* bigBits = nullptr;
+    HBITMAP hBig = makeDib(hdcBig, bw, bh, &bigBits);
+    if (!hBig) { DeleteDC(hdcBig); return nullptr; }
+    HBITMAP oldBig = static_cast<HBITMAP>(SelectObject(hdcBig, hBig));
+
+    // Draws the glyph white-on-black into the big DIB at the given em height and
+    // returns the ink's pixel height (0 if none).
+    auto drawBig = [&](int emPx) -> int
+    {
+        memset(bigBits, 0, static_cast<size_t>(bw) * bh * 4);
+        LOGFONTW lf = { 0 };
+        lf.lfHeight  = -emPx;
+        lf.lfWeight  = FW_NORMAL;
+        lf.lfCharSet = DEFAULT_CHARSET;
+        lf.lfQuality = ANTIALIASED_QUALITY;
+        wcscpy_s(lf.lfFaceName, L"Microsoft JhengHei");
+        HFONT f = CreateFontIndirectW(&lf);
+        HFONT of = static_cast<HFONT>(SelectObject(hdcBig, f));
+        RECT rc = { 0, 0, bw, bh };
+        SetBkMode(hdcBig, TRANSPARENT);
+        SetTextColor(hdcBig, RGB(255, 255, 255));
+        DrawTextW(hdcBig, glyph.c_str(), -1, &rc,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP | DT_NOPREFIX);
+        SelectObject(hdcBig, of);
+        DeleteObject(f);
+        GdiFlush();
+
+        int minY = bh, maxY = -1;
+        const BYTE* q = static_cast<const BYTE*>(bigBits);
+        for (int y = 0; y < bh; ++y)
+            for (int x = 0; x < bw; ++x)
+                if (q[(y * bw + x) * 4 + 2] > 24) // coverage threshold
+                {
+                    if (y < minY) minY = y;
+                    if (y > maxY) maxY = y;
+                    break; // this row has ink; next row
+                }
+        return (maxY < 0) ? 0 : (maxY - minY + 1);
+    };
+
+    // Pass 1: measure at em = big-cell height. Pass 2: scale so the ink height is
+    // targetH (in final px) -> targetH*SS in the big DIB. Then re-render.
+    int inkH = drawBig(bh);
+    if (inkH > 0)
+    {
+        int em = static_cast<int>(static_cast<double>(bh) * (targetH * SS) / inkH + 0.5);
+        if (em < SS)      em = SS;
+        if (em > 3 * bh)  em = 3 * bh;
+        drawBig(em);
+    }
+
+    // Box-downscale the big DIB into the final cx*cy DIB (smooth AA).
+    HDC hdcSmall = CreateCompatibleDC(nullptr);
     void* bits = nullptr;
-    HDC hdcMem = CreateCompatibleDC(nullptr);
-    HBITMAP hDib = CreateDIBSection(hdcMem, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0);
-    if (!hDib) { DeleteDC(hdcMem); return nullptr; }
-    memset(bits, 0, static_cast<size_t>(cx) * cy * 4);
-
-    HBITMAP oldBmp = static_cast<HBITMAP>(SelectObject(hdcMem, hDib));
-
-    LOGFONTW lf = { 0 };
-    lf.lfHeight  = -(cy - 1);
-    lf.lfWeight  = FW_NORMAL;
-    lf.lfCharSet = DEFAULT_CHARSET;
-    lf.lfQuality = ANTIALIASED_QUALITY; // grayscale AA (no ClearType colour fringe)
-    wcscpy_s(lf.lfFaceName, L"Microsoft JhengHei");
-    HFONT font = CreateFontIndirectW(&lf);
-    HFONT oldFont = static_cast<HFONT>(SelectObject(hdcMem, font));
-
-    // Draw the glyph white on the zeroed (black) DIB; the white intensity is the
-    // per-pixel coverage. GDI leaves the alpha byte at 0, so we rebuild it below.
-    RECT rc = { 0, 0, cx, cy };
-    SetBkMode(hdcMem, TRANSPARENT);
-    SetTextColor(hdcMem, RGB(255, 255, 255));
-    DrawTextW(hdcMem, glyph.c_str(), -1, &rc,
-              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP | DT_NOPREFIX);
-
-    SelectObject(hdcMem, oldFont);
-    DeleteObject(font);
+    HBITMAP hDib = makeDib(hdcSmall, cx, cy, &bits);
+    if (!hDib) { SelectObject(hdcBig, oldBig); DeleteObject(hBig); DeleteDC(hdcBig); DeleteDC(hdcSmall); return nullptr; }
+    HBITMAP oldSmall = static_cast<HBITMAP>(SelectObject(hdcSmall, hDib));
+    SetStretchBltMode(hdcSmall, HALFTONE);
+    SetBrushOrgEx(hdcSmall, 0, 0, nullptr);
+    StretchBlt(hdcSmall, 0, 0, cx, cy, hdcBig, 0, 0, bw, bh, SRCCOPY);
     GdiFlush();
 
     // Convert coverage -> premultiplied BGRA in the theme tone.
@@ -85,7 +131,10 @@ HICON MakeGlyphIcon(const std::wstring& glyph)
         px[3] = static_cast<BYTE>(cov);              // A
     }
 
-    SelectObject(hdcMem, oldBmp);
+    SelectObject(hdcSmall, oldSmall);
+    SelectObject(hdcBig, oldBig);
+    DeleteObject(hBig);
+    DeleteDC(hdcBig);
 
     HBITMAP hMask = CreateBitmap(cx, cy, 1, 1, nullptr); // all-zero AND mask
     ICONINFO ii = { 0 };
@@ -96,7 +145,7 @@ HICON MakeGlyphIcon(const std::wstring& glyph)
 
     DeleteObject(hMask);
     DeleteObject(hDib);
-    DeleteDC(hdcMem);
+    DeleteDC(hdcSmall);
     return hIcon;
 }
 
@@ -219,7 +268,7 @@ STDMETHODIMP CLangBarButton::OnClick(TfLBIClick click, POINT /*pt*/, const RECT*
 
 STDMETHODIMP CLangBarButton::InitMenu(ITfMenu* /*pMenu*/)
 {
-    return E_NOTIMPL; // no drop-down menu
+    return E_NOTIMPL; // no context menu (needs the Language Bar; unused)
 }
 
 STDMETHODIMP CLangBarButton::OnMenuSelect(UINT /*wID*/)
