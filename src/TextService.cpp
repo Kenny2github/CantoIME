@@ -272,11 +272,26 @@ void CTextService::AddLangBarButtons()
             return std::wstring(m_chineseMode ? L"Chinese mode" : L"English mode");
         });
         m_pModeButton->SetOnClick([this] { ToggleInputMode(); });
-        // Right-click opens the settings context menu (like Microsoft Quick); the
-        // language bar delivers right-click through InitMenu -> this callback.
+        // Right-click opens the settings context menu (needs the desktop Language
+        // Bar, which Win11 hides). The settings button below is the tray-friendly
+        // path. The langbar delivers right-click through InitMenu -> this callback.
         m_pModeButton->SetMenu([this](ITfMenu* pMenu) { BuildSettingsMenu(pMenu); });
         m_pModeButton->SetOnMenuSelect([this](UINT id) { ApplyMenuChoice(id); });
         pMgr->AddItem(m_pModeButton);
+    }
+
+    // Settings button (gear): a plain button whose left-click opens the options
+    // dialog. Left-click is delivered to OnClick even in the modern Win11 tray
+    // (same path the mode button's toggle uses), so no Language Bar is needed.
+    m_pSettingsButton = new (std::nothrow) CLangBarButton(
+        CLSID_CantoIME, GUID_CantoSettingsButton,
+        TF_LBI_STYLE_BTN_BUTTON | TF_LBI_STYLE_SHOWNINTRAY, 2, L"CantoIME settings");
+    if (m_pSettingsButton)
+    {
+        m_pSettingsButton->SetGlyph([] { return std::wstring(L"\u2699"); }); // ⚙ gear
+        m_pSettingsButton->SetTooltip([] { return std::wstring(L"CantoIME settings"); });
+        m_pSettingsButton->SetOnClick([] { ShowOptionsDialog(nullptr); });
+        pMgr->AddItem(m_pSettingsButton);
     }
 
     pMgr->Release();
@@ -289,13 +304,15 @@ void CTextService::RemoveLangBarButtons()
         SUCCEEDED(m_pThreadMgr->QueryInterface(IID_ITfLangBarItemMgr,
                                                reinterpret_cast<void**>(&pMgr))))
     {
-        if (m_pMainButton) pMgr->RemoveItem(m_pMainButton);
-        if (m_pModeButton) pMgr->RemoveItem(m_pModeButton);
+        if (m_pMainButton)     pMgr->RemoveItem(m_pMainButton);
+        if (m_pModeButton)     pMgr->RemoveItem(m_pModeButton);
+        if (m_pSettingsButton) pMgr->RemoveItem(m_pSettingsButton);
         pMgr->Release();
     }
 
-    if (m_pMainButton) { m_pMainButton->Release(); m_pMainButton = nullptr; }
-    if (m_pModeButton) { m_pModeButton->Release(); m_pModeButton = nullptr; }
+    if (m_pMainButton)     { m_pMainButton->Release();     m_pMainButton = nullptr; }
+    if (m_pModeButton)     { m_pModeButton->Release();     m_pModeButton = nullptr; }
+    if (m_pSettingsButton) { m_pSettingsButton->Release(); m_pSettingsButton = nullptr; }
 }
 
 // Flips between Chinese and English input. Any in-flight composition is

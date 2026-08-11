@@ -107,22 +107,19 @@ first key, so a real single key spanning the buffer still ranks first.)
 The stock dictionaries `traditional.txt` and `simplified.txt` live next to the
 DLL; no `%APPDATA%` and no registry path search are used.
 
-### Options (right-click the 中/英 mode button)
+### Options
 
-**Right-click the 中/英 input-mode button** to open a context menu with all settings
-(like Microsoft Quick), built via `ITfLangBarItemButton::InitMenu`. Left-click that
-button toggles Chinese/English; right-click configures it.
+CantoIME shows a **⚙ settings button** in the taskbar input area (next to the 粵
+indicator and the 中/英 mode button). **Click it to open the options dialog.** This
+works in the normal Windows 11 tray with no extra setup.
 
-> **Windows 11 note:** that right-click menu is delivered through the **desktop
-> Language Bar**, which Win11 hides by default. Enable it once under **Settings →
-> Time & language → Typing → Advanced keyboard settings → "Use the desktop Language
-> Bar when it's available"** (and set the Language Bar to *Docked/Floating*, not
-> *Hidden*). Windows' Settings → "Keyboard options" is Microsoft-in-box-IME-only, so
-> a third-party TIP cannot surface config there. CantoIME also implements
-> `ITfFnConfigure`, so the legacy input-method dialog opens the same settings.
+Two other paths reach the same settings: right-click the **中/英 mode button** for a
+context menu (only when the *desktop Language Bar* is enabled — Windows 11 hides it
+by default, under Settings → Time & language → Typing → Advanced keyboard settings),
+and `ITfFnConfigure` (the legacy input-method dialog). Windows' Settings → "Keyboard
+options" is Microsoft-in-box-IME-only, so a third-party TIP cannot appear there.
 
-The context menu (and the equivalent dialog) edit three per-user settings, stored
-in `HKCU\Software\CantoIME`:
+All of these edit three per-user settings, stored in `HKCU\Software\CantoIME`:
 
 - **Dictionary** — a dropdown that is the *sole* selector for which dictionary is
   read: *Stock Traditional Chinese dictionary* (`traditional.txt`), *Stock

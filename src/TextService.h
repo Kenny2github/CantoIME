@@ -221,6 +221,7 @@ private:
     void RemoveLangBarButtons();
     CLangBarButton* m_pMainButton = nullptr;
     CLangBarButton* m_pModeButton = nullptr;
+    CLangBarButton* m_pSettingsButton = nullptr; // ⚙ left-click -> options dialog
 
     Dictionary      m_dict;
     CandidateWindow m_candWnd;

@@ -50,6 +50,9 @@ const GUID GUID_Profile =
 // {6252B049-21DE-4270-B3F9-70CA49BF7AFE}
 const GUID GUID_CantoMainButton =
     { 0x6252B049, 0x21DE, 0x4270, { 0xB3, 0xF9, 0x70, 0xCA, 0x49, 0xBF, 0x7A, 0xFE } };
+// {7B2AFF87-43E6-4F42-8430-0D60D97F6BB9}
+const GUID GUID_CantoSettingsButton =
+    { 0x7B2AFF87, 0x43E6, 0x4F42, { 0x84, 0x30, 0x0D, 0x60, 0xD9, 0x7F, 0x6B, 0xB9 } };
 
 HINSTANCE g_hInst = nullptr;
 LONG      g_cRefDll = 0;
