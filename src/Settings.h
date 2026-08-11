@@ -6,6 +6,8 @@
 #pragma once
 
 #include <string>
+#include <vector>
+#include <utility>
 
 // Which key, tapped on its own, toggles Chinese <-> English input mode.
 enum class ToggleKeyMode
@@ -46,3 +48,24 @@ CantoSettings LoadSettings();
 
 // Writes settings to HKCU (creating the key). Returns true on success.
 bool SaveSettings(const CantoSettings& s);
+
+// A user override: a romanization key and the extra candidate(s) to append
+// after the stock dictionary's candidates for that key. Managed entirely from
+// the Keyboard options dialog (no text-file editing) and merged into the
+// dictionary at load (see Dictionary::ApplyOverrides).
+using CantoOverride = std::pair<std::wstring, std::vector<std::wstring>>;
+
+// Identity token for the dictionary an override set belongs to, so overrides
+// are scoped per dictionary. Stock scripts use a fixed token; a custom
+// dictionary is identified by its (hashed, registry-safe) path. Returns empty
+// when no dictionary is resolvable (Custom with an empty path).
+std::wstring DictionaryIdentity(DictSource src, const std::wstring& customPath);
+
+// Reads/writes overrides under HKCU\Software\CantoIME\Overrides\<dictId>, one
+// REG_SZ value per key holding the space-separated candidate list. Overrides
+// are scoped to dictId (see DictionaryIdentity) so each dictionary carries its
+// own set. LoadOverrides returns them sorted by key for a stable UI order; an
+// empty dictId yields no overrides and SaveOverrides is a no-op.
+std::vector<CantoOverride> LoadOverrides(const std::wstring& dictId);
+bool SaveOverrides(const std::wstring& dictId,
+                   const std::vector<CantoOverride>& overrides);

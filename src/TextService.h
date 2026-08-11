@@ -215,6 +215,17 @@ private:
     void ApplySettings();
     std::wstring m_dictPathLoaded; // resolved path of the currently-loaded dict
 
+    // User candidate overrides merged into m_dict after each (re)load. Kept so a
+    // completed background load can re-apply them, and so ApplySettings can tell
+    // when they changed (and must trigger a reload).
+    std::vector<CantoOverride> m_overrides;
+
+    // Loads the dictionary on a background thread so switching to CantoIME does
+    // not block the UI thread. The parsed dictionary is handed back to the UI
+    // thread via WM_CANTO_DICT_READY (see MsgWndProc / OnDictionaryLoaded).
+    void BeginLoadDictionary(const std::wstring& path);
+    void OnDictionaryLoaded(Dictionary* loaded); // UI-thread completion handler
+
     // Active service for the low-level mouse hook (one composition at a time).
     static HHOOK          s_wheelHook;
     static CTextService*  s_wheelOwner;

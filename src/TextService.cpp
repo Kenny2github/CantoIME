@@ -36,6 +36,8 @@
 #include <functional>
 #include <algorithm>
 #include <string>
+#include <thread>
+#include <utility>
 
 // Statics backing the low-level mouse wheel hook.
 HHOOK         CTextService::s_wheelHook  = nullptr;
@@ -49,6 +51,9 @@ CTextService* CTextService::s_kbdOwner = nullptr;
 // the UI thread.
 static const UINT WM_CANTO_TOGGLE  = WM_APP + 0x101;
 static const UINT WM_CANTO_OPTIONS = WM_APP + 0x102; // open the options dialog
+// A background dictionary load finished. wParam is a heap Dictionary* whose
+// ownership passes to the UI thread (see BeginLoadDictionary/OnDictionaryLoaded).
+static const UINT WM_CANTO_DICT_READY = WM_APP + 0x103;
 static const wchar_t* kMsgWndClass = L"CantoIME_" CANTO_VARIANT_TAG L"_MsgWnd";
 
 static bool IsShiftVK(WPARAM vk); // defined with the key-handling helpers below
@@ -169,14 +174,19 @@ STDMETHODIMP CTextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD 
         OnCandidateClicked(globalIndex);
     });
 
-    // Apply per-user settings: candidate font size + load the selected dictionary.
+    // Create the hidden message window first: ApplySettings kicks off the
+    // dictionary load on a background thread and hands the result back through
+    // this window, and it also receives the lone-Shift toggle (see header note).
+    CreateMsgWindow();
+
+    // Apply per-user settings: candidate font size + load the selected dictionary
+    // (asynchronously, so switching to CantoIME does not block).
     ApplySettings();
 
     // Add the language-bar buttons (main 粵 icon + 中/英 input-mode toggle).
     AddLangBarButtons();
 
     // Watch for a lone-Shift press to toggle input mode (see the header note).
-    CreateMsgWindow();
     InstallKeyboardHook();
 
     return S_OK;
@@ -349,6 +359,16 @@ LRESULT CALLBACK CTextService::MsgWndProc(HWND hWnd, UINT msg, WPARAM wParam, LP
         if (self && ShowOptionsDialog(nullptr))
             self->ApplySettings();
         return 0;
+
+    case WM_CANTO_DICT_READY:
+    {
+        Dictionary* d = reinterpret_cast<Dictionary*>(wParam);
+        if (self)
+            self->OnDictionaryLoaded(d);
+        else
+            delete d;
+        return 0;
+    }
 
     // Light/dark theme switched: WM_SETTINGCHANGE carries "ImmersiveColorSet".
     // Re-query the button icons so their glyphs recolor with the OS, the way
@@ -1502,11 +1522,59 @@ void CTextService::ApplySettings()
     m_candWnd.SetFontSize(s.fontSize);
     m_toggleKey = s.toggleKey;
 
-    // Reload the dictionary only if the resolved path actually changed.
+    // Reload when the resolved path changed OR the overrides changed, since the
+    // overrides are merged into the loaded dictionary. Rebuilding from the base
+    // file is the clean way to apply removals, so overrides funnel through the
+    // same (background) load path.
     std::wstring path = ResolveDictionaryPath();
-    if (path != m_dictPathLoaded)
+    std::vector<CantoOverride> overrides =
+        LoadOverrides(DictionaryIdentity(s.dictSource, s.dictionaryPath));
+    if (path != m_dictPathLoaded || overrides != m_overrides)
     {
-        m_dict.Load(path);
+        m_overrides = std::move(overrides);
         m_dictPathLoaded = path;
+        BeginLoadDictionary(path);
     }
+}
+
+void CTextService::BeginLoadDictionary(const std::wstring& path)
+{
+    HWND hwnd = m_hMsgWnd;
+    if (!hwnd)
+    {
+        // No message window to hand the result back through: load synchronously.
+        // This should not happen post-activation (the window is created first).
+        m_dict.Load(path);
+        m_dict.ApplyOverrides(m_overrides);
+        return;
+    }
+
+    // Parse off the UI thread, then post the finished dictionary back. The
+    // thread captures only the target window and path (not `this`), so a
+    // Deactivate that destroys the window mid-load cannot dangle: PostMessage
+    // simply fails and the orphaned dictionary is freed here.
+    // Pin the DLL for the lifetime of the worker so it cannot be unloaded out
+    // from under the thread if the service deactivates mid-load.
+    DllAddRef();
+    Dictionary* d = new Dictionary();
+    std::thread([d, path, hwnd]()
+    {
+        d->Load(path);
+        if (!PostMessageW(hwnd, WM_CANTO_DICT_READY, reinterpret_cast<WPARAM>(d), 0))
+            delete d;
+        DllRelease();
+    }).detach();
+}
+
+void CTextService::OnDictionaryLoaded(Dictionary* loaded)
+{
+    // Ignore a stale load whose target was superseded while it was parsing (the
+    // user switched dictionaries again). Only the load matching the latest
+    // requested path wins.
+    if (loaded->Path() == m_dictPathLoaded)
+    {
+        m_dict = std::move(*loaded);
+        m_dict.ApplyOverrides(m_overrides);
+    }
+    delete loaded;
 }

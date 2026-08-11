@@ -137,13 +137,55 @@ bool Dictionary::Load(const std::wstring& path)
 
     // Build the sorted key list used for prefix scans. Done once per load so
     // KeysWithPrefix can binary-search instead of scanning the whole map.
+    RebuildIndex();
+
+    return true;
+}
+
+void Dictionary::RebuildIndex()
+{
     m_sortedKeys.clear();
     m_sortedKeys.reserve(m_map.size());
     for (const auto& kv : m_map)
         m_sortedKeys.push_back(kv.first);
     std::sort(m_sortedKeys.begin(), m_sortedKeys.end());
+}
 
-    return true;
+void Dictionary::ApplyOverrides(
+    const std::vector<std::pair<std::wstring, std::vector<std::wstring>>>& overrides)
+{
+    if (overrides.empty())
+        return;
+
+    bool changed = false;
+    for (const auto& ov : overrides)
+    {
+        std::wstring key = ToLower(ov.first);
+        if (key.empty() || ov.second.empty())
+            continue;
+
+        // Prepend before the stock candidates so the user's extras take the
+        // low positions (the first is pickable with the 1 key). Dedup: an
+        // override that duplicates a stock character surfaces only at the
+        // front, not twice.
+        std::vector<std::wstring>& vec = m_map[key];
+        std::vector<std::wstring> merged;
+        std::unordered_set<std::wstring> seen;
+        for (const std::wstring& c : ov.second)
+            if (seen.insert(c).second)
+                merged.push_back(c);
+        for (const std::wstring& c : vec)
+            if (seen.insert(c).second)
+                merged.push_back(c);
+        vec.swap(merged);
+
+        if (key.size() > m_maxKeyLen)
+            m_maxKeyLen = key.size();
+        changed = true;
+    }
+
+    if (changed)
+        RebuildIndex();
 }
 
 bool Dictionary::Reload()

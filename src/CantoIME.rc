@@ -7,8 +7,8 @@
 #include <windows.h>
 #include "resource.h"
 
-IDD_OPTIONS DIALOGEX 0, 0, 300, 150
-STYLE DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+IDD_OPTIONS DIALOGEX 0, 0, 300, 322
+STYLE DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MAXIMIZEBOX
 CAPTION "CantoIME Options"
 FONT 9, "Segoe UI", 400, 0, 0x1
 BEGIN
@@ -26,6 +26,18 @@ BEGIN
     COMBOBOX        IDC_FONTSIZE, 140, 94, 62, 160,
                     CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
 
-    DEFPUSHBUTTON   "OK", IDOK, 176, 124, 52, 16
-    PUSHBUTTON      "Cancel", IDCANCEL, 236, 124, 52, 16
+    GROUPBOX        "Custom candidates", IDC_OVR_GROUP, 10, 116, 280, 172
+    LTEXT           "Associate a romanization key with extra candidates. Select an entry to edit it, then Add / Update or Remove.",
+                    IDC_STATIC, 18, 128, 264, 18
+    LISTBOX         IDC_OVR_LIST, 18, 150, 264, 82,
+                    LBS_NOTIFY | LBS_USETABSTOPS | WS_VSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Key:", IDC_OVR_KEYLABEL, 18, 240, 22, 9
+    EDITTEXT        IDC_OVR_KEY, 40, 238, 78, 14, ES_AUTOHSCROLL | ES_LOWERCASE
+    LTEXT           "Candidates:", IDC_OVR_CANDLABEL, 124, 240, 42, 9
+    EDITTEXT        IDC_OVR_CANDS, 168, 238, 114, 14, ES_AUTOHSCROLL
+    PUSHBUTTON      "Add / Update", IDC_OVR_ADD, 128, 262, 74, 16
+    PUSHBUTTON      "Remove", IDC_OVR_REMOVE, 208, 262, 74, 16
+
+    DEFPUSHBUTTON   "OK", IDOK, 176, 298, 52, 16
+    PUSHBUTTON      "Cancel", IDCANCEL, 236, 298, 52, 16
 END
