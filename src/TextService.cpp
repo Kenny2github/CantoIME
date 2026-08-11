@@ -32,9 +32,11 @@
 #include <msctf.h>
 #include <ctffunc.h>   // ITfContextView / display helpers live in msctf; kept for completeness
 #include <windowsx.h>  // GET_WHEEL_DELTA_WPARAM
+#include <commdlg.h>   // GetOpenFileName (custom dictionary)
 #include <unordered_set>
 #include <functional>
 #include <algorithm>
+#include <string>
 
 // Statics backing the low-level mouse wheel hook.
 HHOOK         CTextService::s_wheelHook  = nullptr;
@@ -47,9 +49,6 @@ CTextService* CTextService::s_kbdOwner = nullptr;
 // Posted from the keyboard hook to the message-only window to run the toggle on
 // the UI thread.
 static const UINT WM_CANTO_TOGGLE = WM_APP + 0x101;
-
-// Menu item id for the main button's "Options…" entry.
-static const UINT kMenuOptions = 1;
 static const wchar_t* kMsgWndClass = L"CantoIME_" CANTO_VARIANT_TAG L"_MsgWnd";
 
 static bool IsShiftVK(WPARAM vk); // defined with the key-handling helpers below
@@ -249,27 +248,12 @@ void CTextService::AddLangBarButtons()
     // Main input-method button: the input-indicator glyph (粵). Static.
     m_pMainButton = new (std::nothrow) CLangBarButton(
         CLSID_CantoIME, GUID_CantoMainButton,
-        TF_LBI_STYLE_BTN_MENU | TF_LBI_STYLE_SHOWNINTRAY, 0, L"CantoIME");
+        TF_LBI_STYLE_BTN_BUTTON | TF_LBI_STYLE_SHOWNINTRAY, 0, L"CantoIME");
     if (m_pMainButton)
     {
         // U+7CB5 粵 (Yue / Cantonese). Use an escape, not a literal, so the
         // glyph does not depend on the source-file encoding MSVC assumes.
         m_pMainButton->SetGlyph([] { return std::wstring(L"\u7CB5"); }); // 粵
-        // Third-party TIPs can't surface config in Settings' "Keyboard options"
-        // (in-box IMEs only), so the tray indicator's menu is how the options
-        // dialog is reached. TF_LBI_STYLE_BTN_MENU (above) makes clicking it open
-        // this menu.
-        m_pMainButton->SetMenu([](ITfMenu* pMenu)
-        {
-            const wchar_t* label = L"Options…"; // Options…
-            pMenu->AddMenuItem(kMenuOptions, 0, nullptr, nullptr,
-                               label, static_cast<ULONG>(wcslen(label)), nullptr);
-        });
-        m_pMainButton->SetOnMenuSelect([](UINT id)
-        {
-            if (id == kMenuOptions)
-                ShowOptionsDialog(nullptr);
-        });
         pMgr->AddItem(m_pMainButton);
     }
 
@@ -288,6 +272,8 @@ void CTextService::AddLangBarButtons()
             return std::wstring(m_chineseMode ? L"Chinese mode" : L"English mode");
         });
         m_pModeButton->SetOnClick([this] { ToggleInputMode(); });
+        // Right-click opens the settings context menu (like Microsoft Quick).
+        m_pModeButton->SetOnRightClick([this](POINT pt) { ShowSettingsMenu(pt); });
         pMgr->AddItem(m_pModeButton);
     }
 
@@ -1486,6 +1472,103 @@ bool CTextService::ToggleKeyMatches(DWORD vk) const
     case ToggleKeyMode::LeftShift:  return vk == VK_LSHIFT;
     case ToggleKeyMode::RightShift: return vk == VK_RSHIFT;
     default:                        return false; // Neither
+    }
+}
+
+// Menu-item id ranges for the settings context menu.
+enum {
+    kDictTrad = 100, kDictSimp = 101, kDictCustom = 102,
+    kTogBoth  = 200, kTogLeft  = 201, kTogRight   = 202, kTogNeither = 203,
+    kFontBase = 300, // id = kFontBase + point size
+};
+
+void CTextService::ShowSettingsMenu(POINT pt)
+{
+    CantoSettings s = LoadSettings();
+    const UINT rc = MF_STRING;
+
+    HMENU hDict = CreatePopupMenu();
+    AppendMenuW(hDict, rc | (s.dictSource == DictSource::StockTraditional ? MF_CHECKED : 0),
+                kDictTrad, L"Stock Traditional Chinese dictionary");
+    AppendMenuW(hDict, rc | (s.dictSource == DictSource::StockSimplified ? MF_CHECKED : 0),
+                kDictSimp, L"Stock Simplified Chinese dictionary");
+    AppendMenuW(hDict, rc | (s.dictSource == DictSource::Custom ? MF_CHECKED : 0),
+                kDictCustom, L"Custom…"); // Custom…
+
+    HMENU hTog = CreatePopupMenu();
+    AppendMenuW(hTog, rc | (s.toggleKey == ToggleKeyMode::Both ? MF_CHECKED : 0),
+                kTogBoth, L"Both shifts");
+    AppendMenuW(hTog, rc | (s.toggleKey == ToggleKeyMode::LeftShift ? MF_CHECKED : 0),
+                kTogLeft, L"Left Shift");
+    AppendMenuW(hTog, rc | (s.toggleKey == ToggleKeyMode::RightShift ? MF_CHECKED : 0),
+                kTogRight, L"Right Shift");
+    AppendMenuW(hTog, rc | (s.toggleKey == ToggleKeyMode::Neither ? MF_CHECKED : 0),
+                kTogNeither, L"Neither");
+
+    HMENU hFont = CreatePopupMenu();
+    static const int kSizes[] = { 12, 14, 16, 18, 20, 24, 28, 32, 36, 48 };
+    for (int sz : kSizes)
+        AppendMenuW(hFont, rc | (s.fontSize == sz ? MF_CHECKED : 0),
+                    kFontBase + sz, std::to_wstring(sz).c_str());
+
+    HMENU hTop = CreatePopupMenu();
+    AppendMenuW(hTop, MF_POPUP, reinterpret_cast<UINT_PTR>(hDict), L"Dictionary");
+    AppendMenuW(hTop, MF_POPUP, reinterpret_cast<UINT_PTR>(hTog),  L"Chinese/English toggle key");
+    AppendMenuW(hTop, MF_POPUP, reinterpret_cast<UINT_PTR>(hFont), L"Candidate font size");
+
+    HWND hOwner = GetForegroundWindow();
+    if (!hOwner) hOwner = m_hMsgWnd;
+    SetForegroundWindow(hOwner); // so the menu dismisses on click-away
+    UINT cmd = static_cast<UINT>(TrackPopupMenu(
+        hTop, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
+        pt.x, pt.y, 0, hOwner, nullptr));
+    PostMessageW(hOwner, WM_NULL, 0, 0);
+    DestroyMenu(hTop); // also destroys the attached submenus
+
+    if (cmd == 0)
+        return; // dismissed
+
+    bool changed = true;
+    switch (cmd)
+    {
+    case kDictTrad:    s.dictSource = DictSource::StockTraditional; break;
+    case kDictSimp:    s.dictSource = DictSource::StockSimplified;  break;
+    case kDictCustom:
+    {
+        wchar_t path[MAX_PATH] = { 0 };
+        if (!s.dictionaryPath.empty())
+            wcsncpy_s(path, s.dictionaryPath.c_str(), _TRUNCATE);
+        OPENFILENAMEW ofn = { sizeof(ofn) };
+        ofn.hwndOwner   = hOwner;
+        ofn.lpstrFilter = L"Text files (*.txt)\0*.txt\0All files (*.*)\0*.*\0";
+        ofn.lpstrFile   = path;
+        ofn.nMaxFile    = MAX_PATH;
+        ofn.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
+        ofn.lpstrTitle  = L"Select dictionary file";
+        if (GetOpenFileNameW(&ofn))
+        {
+            s.dictSource = DictSource::Custom;
+            s.dictionaryPath = path;
+        }
+        else changed = false; // cancelled the file picker
+        break;
+    }
+    case kTogBoth:    s.toggleKey = ToggleKeyMode::Both;       break;
+    case kTogLeft:    s.toggleKey = ToggleKeyMode::LeftShift;  break;
+    case kTogRight:   s.toggleKey = ToggleKeyMode::RightShift; break;
+    case kTogNeither: s.toggleKey = ToggleKeyMode::Neither;    break;
+    default:
+        if (cmd > kFontBase && cmd <= kFontBase + 72)
+            s.fontSize = static_cast<int>(cmd) - kFontBase;
+        else
+            changed = false;
+        break;
+    }
+
+    if (changed)
+    {
+        SaveSettings(s);
+        ApplySettings(); // live: reload dict / resize font / update toggle key
     }
 }
 

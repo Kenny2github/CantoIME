@@ -187,6 +187,9 @@ private:
 
     void ToggleInputMode(); // flip Chinese/English, commit any composition first
     void RefreshLangBarIcons(); // re-query button icons (e.g. on a theme change)
+    // Right-click context menu on the mode button: all settings live here
+    // (dictionary, toggle key, font size), applied live on selection.
+    void ShowSettingsMenu(POINT pt);
 
     // Lone-Shift detection. TSF does not reliably deliver modifier-only keys to
     // the key-event sink, so a low-level keyboard hook watches Shift instead and

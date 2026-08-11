@@ -107,15 +107,18 @@ first key, so a real single key spanning the buffer still ranks first.)
 The stock dictionaries `traditional.txt` and `simplified.txt` live next to the
 DLL; no `%APPDATA%` and no registry path search are used.
 
-### Options dialog
+### Options (right-click the 中/英 mode button)
 
-Reach it from the **粵 input-indicator button** in the taskbar (system tray) while
-CantoIME is active: click it and choose **Options…**. (Windows' Settings →
-"Keyboard options" is reserved for Microsoft's in-box IMEs; a third-party TIP
-cannot appear there, so the tray-button menu is the entry point, as with other
-third-party IMEs. CantoIME also implements `ITfFnConfigure`, so the legacy input
-dialog opens it too.) The dialog edits three per-user settings, stored in
-`HKCU\Software\CantoIME`:
+**Right-click the 中/英 input-mode button** in the taskbar (system tray) while
+CantoIME is active to open a context menu with all settings (like Microsoft
+Quick). Left-click that button toggles Chinese/English; right-click configures it.
+(Windows' Settings → "Keyboard options" is reserved for Microsoft's in-box IMEs;
+a third-party TIP cannot appear there, so the tray button's context menu is the
+entry point, as with other third-party IMEs. CantoIME also implements
+`ITfFnConfigure`, so the legacy input-method dialog opens the same settings.)
+
+The context menu (and the equivalent dialog) edit three per-user settings, stored
+in `HKCU\Software\CantoIME`:
 
 - **Dictionary** — a dropdown that is the *sole* selector for which dictionary is
   read: *Stock Traditional Chinese dictionary* (`traditional.txt`), *Stock

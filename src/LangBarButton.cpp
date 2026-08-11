@@ -210,26 +210,23 @@ STDMETHODIMP CLangBarButton::GetTooltipString(BSTR* pbstrToolTip)
 
 // ---- ITfLangBarItemButton ----
 
-STDMETHODIMP CLangBarButton::OnClick(TfLBIClick click, POINT /*pt*/, const RECT* /*prcArea*/)
+STDMETHODIMP CLangBarButton::OnClick(TfLBIClick click, POINT pt, const RECT* /*prcArea*/)
 {
     if (click == TF_LBI_CLK_LEFT && m_onClick)
         m_onClick();
+    else if (click == TF_LBI_CLK_RIGHT && m_onRightClick)
+        m_onRightClick(pt);
     return S_OK;
 }
 
-STDMETHODIMP CLangBarButton::InitMenu(ITfMenu* pMenu)
+STDMETHODIMP CLangBarButton::InitMenu(ITfMenu* /*pMenu*/)
 {
-    if (!m_menu || pMenu == nullptr)
-        return E_NOTIMPL;
-    m_menu(pMenu);
-    return S_OK;
+    return E_NOTIMPL; // context menu is handled in OnClick via TrackPopupMenu
 }
 
-STDMETHODIMP CLangBarButton::OnMenuSelect(UINT wID)
+STDMETHODIMP CLangBarButton::OnMenuSelect(UINT /*wID*/)
 {
-    if (m_onMenuSelect)
-        m_onMenuSelect(wID);
-    return S_OK;
+    return E_NOTIMPL;
 }
 
 STDMETHODIMP CLangBarButton::GetIcon(HICON* phIcon)
