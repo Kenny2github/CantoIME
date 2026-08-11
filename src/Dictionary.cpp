@@ -164,13 +164,20 @@ void Dictionary::ApplyOverrides(
         if (key.empty() || ov.second.empty())
             continue;
 
-        // Append after the stock candidates, skipping any that already exist so
-        // an override that duplicates a stock character does not surface twice.
+        // Prepend before the stock candidates so the user's extras take the
+        // low positions (the first is pickable with the 1 key). Dedup: an
+        // override that duplicates a stock character surfaces only at the
+        // front, not twice.
         std::vector<std::wstring>& vec = m_map[key];
-        std::unordered_set<std::wstring> seen(vec.begin(), vec.end());
+        std::vector<std::wstring> merged;
+        std::unordered_set<std::wstring> seen;
         for (const std::wstring& c : ov.second)
             if (seen.insert(c).second)
-                vec.push_back(c);
+                merged.push_back(c);
+        for (const std::wstring& c : vec)
+            if (seen.insert(c).second)
+                merged.push_back(c);
+        vec.swap(merged);
 
         if (key.size() > m_maxKeyLen)
             m_maxKeyLen = key.size();
