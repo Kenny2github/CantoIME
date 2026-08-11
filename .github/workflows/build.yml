@@ -48,6 +48,7 @@ jobs:
                     build\Release\CantoIME-SG.dll, `
                     build\Release\traditional.txt, `
                     build\Release\simplified.txt, `
+                    build\Release\canto-dictd.exe, `
                     installer\Output\CantoIME-Setup.exe dist\
 
       - name: Upload artifact

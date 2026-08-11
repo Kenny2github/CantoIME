@@ -57,11 +57,21 @@ Source: "..\build\Release\CantoIME-SG.dll"; DestDir: "{app}"; Check: IsVariant('
 ; reads; simplified.txt ships for future use. Removed with the app on uninstall.
 Source: "..\traditional.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\simplified.txt";  DestDir: "{app}"; Flags: ignoreversion
+; The dictionary service. A per-user resident process that loads the dictionary
+; once and answers the IME's lookup requests over a named pipe, so switching into
+; the IME does not re-parse the dictionary. Removed with the app on uninstall.
+Source: "..\build\Release\canto-dictd.exe"; DestDir: "{app}"; Flags: ignoreversion 64bit restartreplace uninsrestartdelete
 
 [Registry]
 ; Clean up the per-user options key on uninstall (not created at install time;
 ; the IME writes it when the user changes options).
 Root: HKCU; Subkey: "Software\CantoIME"; Flags: uninsdeletekey dontcreatekey
+; Start the dictionary service at each user's logon (running as that user, so it
+; reads their settings), so the dictionary is already loaded before the first
+; switch into the IME. If it is not yet running, the IME also starts it on demand.
+Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; \
+    ValueName: "CantoIME Dictionary Service"; ValueData: """{app}\canto-dictd.exe"""; \
+    Flags: uninsdeletevalue
 
 [Run]
 ; Register the selected variant's TSF text service via the 64-bit regsvr32.
@@ -82,6 +92,9 @@ Filename: "{sys}\regsvr32.exe"; Parameters: "/s ""{app}\CantoIME-SG.dll"""; \
     Flags: runhidden waituntilterminated
 
 [UninstallRun]
+; Stop the resident dictionary service first, so its executable can be removed.
+Filename: "{sys}\taskkill.exe"; Parameters: "/f /im canto-dictd.exe"; \
+    Flags: runhidden; RunOnceId: "StopDictd"
 ; Unregister BEFORE files are removed. Only the variant DLL actually present in
 ; {app} gets unregistered (exactly the one that was installed).
 Filename: "{sys}\regsvr32.exe"; Parameters: "/u /s ""{app}\CantoIME-HK.dll"""; \

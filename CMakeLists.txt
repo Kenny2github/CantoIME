@@ -40,6 +40,8 @@ endif()
 set(CANTO_SOURCES
     src/Globals.cpp
     src/Dictionary.cpp
+    src/CandidateEngine.cpp
+    src/DictClient.cpp
     src/CandidateWindow.cpp
     src/TextService.cpp
     src/LangBarButton.cpp
@@ -131,3 +133,23 @@ add_canto_variant(TW)  # Taiwan          (Traditional)
 add_canto_variant(MO)  # Macao SAR       (Traditional)
 add_canto_variant(CN)  # China           (Simplified)
 add_canto_variant(SG)  # Singapore       (Simplified)
+
+# The dictionary service (canto-dictd.exe): a per-user, windowless resident
+# process that loads the dictionary once and answers candidate-resolution
+# requests from the IME over a named pipe. WIN32 => no console window. Compiled
+# with a default variant define (only affects the stock-dictionary default before
+# the user has chosen one; the IME's SETDICT is authoritative). Built into the
+# same Release folder so the installer and CI staging can pick it up.
+add_executable(canto-dictd WIN32
+    src/DictService.cpp
+    src/Dictionary.cpp
+    src/CandidateEngine.cpp
+    src/Settings.cpp)
+set_target_properties(canto-dictd PROPERTIES OUTPUT_NAME "canto-dictd")
+target_include_directories(canto-dictd PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_compile_definitions(canto-dictd PRIVATE
+    UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX CANTO_VARIANT_HK)
+target_link_libraries(canto-dictd PRIVATE advapi32)
+if(MSVC)
+    target_compile_options(canto-dictd PRIVATE /W4 /permissive-)
+endif()

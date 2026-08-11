@@ -51,9 +51,6 @@ CTextService* CTextService::s_kbdOwner = nullptr;
 // the UI thread.
 static const UINT WM_CANTO_TOGGLE  = WM_APP + 0x101;
 static const UINT WM_CANTO_OPTIONS = WM_APP + 0x102; // open the options dialog
-// A background dictionary load finished. wParam is a heap Dictionary* whose
-// ownership passes to the UI thread (see BeginLoadDictionary/OnDictionaryLoaded).
-static const UINT WM_CANTO_DICT_READY = WM_APP + 0x103;
 static const wchar_t* kMsgWndClass = L"CantoIME_" CANTO_VARIANT_TAG L"_MsgWnd";
 
 static bool IsShiftVK(WPARAM vk); // defined with the key-handling helpers below
@@ -359,16 +356,6 @@ LRESULT CALLBACK CTextService::MsgWndProc(HWND hWnd, UINT msg, WPARAM wParam, LP
         if (self && ShowOptionsDialog(nullptr))
             self->ApplySettings();
         return 0;
-
-    case WM_CANTO_DICT_READY:
-    {
-        Dictionary* d = reinterpret_cast<Dictionary*>(wParam);
-        if (self)
-            self->OnDictionaryLoaded(d);
-        else
-            delete d;
-        return 0;
-    }
 
     // Light/dark theme switched: WM_SETTINGCHANGE carries "ImmersiveColorSet".
     // Re-query the button icons so their glyphs recolor with the OS, the way
@@ -833,116 +820,23 @@ STDMETHODIMP CTextService::OnCompositionTerminated(TfEditCookie /*ec*/, ITfCompo
 // Candidate management
 // ---------------------------------------------------------------------------
 
-// Upper bound on candidates we build for one buffer. Prefixes like "a" can
-// match thousands of keys; the window pages through them 9 at a time, but we
-// still cap the working set so a broad prefix stays responsive.
-static const size_t kMaxCandidates = 300;
-static const size_t kMaxPrefixKeys = 200;
-
-// Builds m_candidates from m_romanization, preferring segmentations that consume
-// the buffer greedily: the longest key first, then the longest next key, etc.
-//
-// The buffer is split into a run of leading exact keys (each locked to its best
-// character) followed by a non-empty final segment that is prefix-matched. Every
-// such split is enumerated, then ordered by its per-key consumption sequence
-// (leading key lengths, then the final segment's length) compared largest-first.
-// So for "abcdefg" with keys abc/def/g/abcd/efg, "abcd efg" (lengths 4,3) beats
-// "abc def g" (lengths 3,3,1) because its first key is longer, not because it
-// uses fewer keys. The 0-leading-key split is the whole buffer prefix-matched:
-// its first key consumes all n characters, the maximum possible, so a real key
-// spanning the buffer still ranks first, e.g. "hah" surfaces 哈哈 (key "haha")
-// before 下下 (a doubling of "ha").
-//
-// Each split emits one entry per character of each prefix-matched key, displayed
-// as <locked chars><char><leftover romanization> and committed as <locked chars>
-// <char>. All splits share one dedup set keyed on the commit string, so the first
-// (greediest) segmentation to produce a given Chinese text wins and later
-// duplicates drop.
+// Builds m_candidates from m_romanization by asking the dictionary service to
+// resolve the buffer. The segmentation/ordering logic lives in CandidateEngine
+// (shared with the service and the in-process fallback); DictClient returns the
+// finished (display, commit) list.
 void CTextService::BuildCandidates()
 {
     m_candidates.clear();
     if (m_romanization.empty())
         return;
 
-    const std::wstring& buf = m_romanization;
-    const size_t n = buf.size();
-
-    std::unordered_set<std::wstring> seenCommits;
-
-    // Emits candidates for one (locked prefix, open final segment) split.
-    // Returns false once the candidate cap is reached so callers stop early.
-    auto emit = [&](const std::wstring& locked, const std::wstring& finalSeg) -> bool
+    for (EngineCandidate& c : m_dictClient.Resolve(m_romanization))
     {
-        std::vector<std::wstring> keys = m_dict.KeysWithPrefix(finalSeg, kMaxPrefixKeys);
-        for (const std::wstring& key : keys)
-        {
-            std::wstring remainder = key.substr(finalSeg.size()); // "" for exact match
-            for (const std::wstring& ch : m_dict.Lookup(key))
-            {
-                std::wstring commit = locked + ch;
-                if (!seenCommits.insert(commit).second)
-                    continue; // already emitted this text via a greedier split
-                Candidate c;
-                c.display = commit + remainder;
-                c.commit  = std::move(commit);
-                m_candidates.push_back(std::move(c));
-                if (m_candidates.size() >= kMaxCandidates)
-                    return false;
-            }
-        }
-        return true;
-    };
-
-    // ---- Enumerate every split: partition a prefix [0, consumed) of the buffer
-    // into leading exact keys (locked to their best character), leaving a
-    // non-empty final segment [consumed, n) to prefix-match. `seq` is the split's
-    // consumption profile: the leading key lengths followed by the final segment
-    // length (always summing to n). ----
-    struct Split { std::wstring locked; size_t consumed; std::vector<size_t> seq; };
-    std::vector<Split> splits;
-    const size_t kMaxSplits = 256; // safety valve against pathological fan-out
-
-    std::function<void(size_t, const std::wstring&, const std::vector<size_t>&)> gather =
-        [&](size_t pos, const std::wstring& locked, const std::vector<size_t>& lens)
-    {
-        if (splits.size() >= kMaxSplits)
-            return;
-        std::vector<size_t> seq = lens;
-        seq.push_back(n - pos);                       // the final segment's length
-        splits.push_back({ locked, pos, std::move(seq) }); // pos < n
-
-        // Extend by one more leading exact key, keeping the final segment
-        // non-empty (pos + len < n). Lengths are bounded by the longest exact
-        // key at this position.
-        size_t maxLen = m_dict.LongestExactPrefixLen(buf, pos);
-        for (size_t len = 1; len <= maxLen && pos + len < n; ++len)
-        {
-            std::wstring key = buf.substr(pos, len);
-            const auto& chars = m_dict.Lookup(key);
-            if (chars.empty())
-                continue; // not an exact key at this length
-            std::vector<size_t> nextLens = lens;
-            nextLens.push_back(len);
-            gather(pos + len, locked + chars.front(), nextLens);
-        }
-    };
-    gather(0, std::wstring(), std::vector<size_t>());
-
-    // Greediest consumption first: compare the length sequences element by
-    // element, larger length wins. stable_sort keeps discovery order on ties.
-    std::stable_sort(splits.begin(), splits.end(),
-        [](const Split& a, const Split& b)
-        {
-            size_t m = std::min(a.seq.size(), b.seq.size());
-            for (size_t i = 0; i < m; ++i)
-                if (a.seq[i] != b.seq[i])
-                    return a.seq[i] > b.seq[i];
-            return a.seq.size() < b.seq.size();
-        });
-
-    for (const Split& s : splits)
-        if (!emit(s.locked, buf.substr(s.consumed)))
-            return;
+        Candidate cand;
+        cand.display = std::move(c.display);
+        cand.commit  = std::move(c.commit);
+        m_candidates.push_back(std::move(cand));
+    }
 }
 
 void CTextService::UpdateCandidates(ITfContext* pic)
@@ -1522,10 +1416,10 @@ void CTextService::ApplySettings()
     m_candWnd.SetFontSize(s.fontSize);
     m_toggleKey = s.toggleKey;
 
-    // Reload when the resolved path changed OR the overrides changed, since the
-    // overrides are merged into the loaded dictionary. Rebuilding from the base
-    // file is the clean way to apply removals, so overrides funnel through the
-    // same (background) load path.
+    // Push the dictionary selection to the service only when the resolved path
+    // or the overrides changed. The service (a resident process) keeps the
+    // dictionary loaded across activations, so this does not re-parse anything
+    // in the common case; SetDictionary is a fast no-op when nothing changed.
     std::wstring path = ResolveDictionaryPath();
     std::vector<CantoOverride> overrides =
         LoadOverrides(DictionaryIdentity(s.dictSource, s.dictionaryPath));
@@ -1533,48 +1427,6 @@ void CTextService::ApplySettings()
     {
         m_overrides = std::move(overrides);
         m_dictPathLoaded = path;
-        BeginLoadDictionary(path);
+        m_dictClient.SetDictionary(path, m_overrides);
     }
-}
-
-void CTextService::BeginLoadDictionary(const std::wstring& path)
-{
-    HWND hwnd = m_hMsgWnd;
-    if (!hwnd)
-    {
-        // No message window to hand the result back through: load synchronously.
-        // This should not happen post-activation (the window is created first).
-        m_dict.Load(path);
-        m_dict.ApplyOverrides(m_overrides);
-        return;
-    }
-
-    // Parse off the UI thread, then post the finished dictionary back. The
-    // thread captures only the target window and path (not `this`), so a
-    // Deactivate that destroys the window mid-load cannot dangle: PostMessage
-    // simply fails and the orphaned dictionary is freed here.
-    // Pin the DLL for the lifetime of the worker so it cannot be unloaded out
-    // from under the thread if the service deactivates mid-load.
-    DllAddRef();
-    Dictionary* d = new Dictionary();
-    std::thread([d, path, hwnd]()
-    {
-        d->Load(path);
-        if (!PostMessageW(hwnd, WM_CANTO_DICT_READY, reinterpret_cast<WPARAM>(d), 0))
-            delete d;
-        DllRelease();
-    }).detach();
-}
-
-void CTextService::OnDictionaryLoaded(Dictionary* loaded)
-{
-    // Ignore a stale load whose target was superseded while it was parsing (the
-    // user switched dictionaries again). Only the load matching the latest
-    // requested path wins.
-    if (loaded->Path() == m_dictPathLoaded)
-    {
-        m_dict = std::move(*loaded);
-        m_dict.ApplyOverrides(m_overrides);
-    }
-    delete loaded;
 }

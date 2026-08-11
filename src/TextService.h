@@ -16,7 +16,7 @@
 #pragma once
 
 #include "Globals.h"
-#include "Dictionary.h"
+#include "DictClient.h" // dictionary service client (+ EngineCandidate, fallback)
 #include "CandidateWindow.h"
 #include "Settings.h"   // ToggleKeyMode
 
@@ -206,25 +206,19 @@ private:
     CLangBarButton* m_pMainButton = nullptr;
     CLangBarButton* m_pModeButton = nullptr;
 
-    Dictionary      m_dict;
+    DictClient      m_dictClient;   // talks to the resident dictionary service
     CandidateWindow m_candWnd;
 
     // Applies per-user settings (HKCU): candidate font size, and the dictionary
-    // (reloaded only if the resolved path changed). Called at activation and when
-    // the IME regains focus, so options-dialog changes take effect promptly.
+    // (pushed to the service only if the resolved path/overrides changed). Called
+    // at activation and when the IME regains focus, so options-dialog changes
+    // take effect promptly.
     void ApplySettings();
-    std::wstring m_dictPathLoaded; // resolved path of the currently-loaded dict
+    std::wstring m_dictPathLoaded; // resolved path last pushed to the service
 
-    // User candidate overrides merged into m_dict after each (re)load. Kept so a
-    // completed background load can re-apply them, and so ApplySettings can tell
-    // when they changed (and must trigger a reload).
+    // User candidate overrides. Kept so ApplySettings can tell when they changed
+    // (and must push a new dictionary selection to the service).
     std::vector<CantoOverride> m_overrides;
-
-    // Loads the dictionary on a background thread so switching to CantoIME does
-    // not block the UI thread. The parsed dictionary is handed back to the UI
-    // thread via WM_CANTO_DICT_READY (see MsgWndProc / OnDictionaryLoaded).
-    void BeginLoadDictionary(const std::wstring& path);
-    void OnDictionaryLoaded(Dictionary* loaded); // UI-thread completion handler
 
     // Active service for the low-level mouse hook (one composition at a time).
     static HHOOK          s_wheelHook;
