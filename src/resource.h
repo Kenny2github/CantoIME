@@ -20,6 +20,11 @@
 #define IDC_OVR_ADD    1008
 #define IDC_OVR_REMOVE 1009
 
+// Statics that must reposition/resize when the dialog is resized.
+#define IDC_OVR_GROUP     1010
+#define IDC_OVR_KEYLABEL  1011
+#define IDC_OVR_CANDLABEL 1012
+
 #ifndef IDC_STATIC
 #define IDC_STATIC    (-1)
 #endif

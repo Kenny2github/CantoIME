@@ -212,21 +212,20 @@ static void OnOverrideAdd(HWND hDlg)
     }
 
     std::vector<CantoOverride>& model = *Model(hDlg);
-    int selectIndex = -1;
     auto it = std::find_if(model.begin(), model.end(),
                            [&](const CantoOverride& o) { return o.first == key; });
     if (it != model.end())
-    {
         it->second = std::move(cands); // update in place
-        selectIndex = static_cast<int>(it - model.begin());
-    }
     else
-    {
         model.emplace_back(key, std::move(cands));
-        selectIndex = static_cast<int>(model.size()) - 1;
-    }
 
-    RefreshOverrideList(hDlg, selectIndex);
+    // Clear the fields and drop the selection so the next Add starts a fresh
+    // entry rather than being stuck updating the one just committed. (Selecting
+    // the added row would refill the fields and turn the next Add into an edit.)
+    RefreshOverrideList(hDlg, -1);
+    SetDlgItemTextW(hDlg, IDC_OVR_KEY, L"");
+    SetDlgItemTextW(hDlg, IDC_OVR_CANDS, L"");
+    SetFocus(GetDlgItem(hDlg, IDC_OVR_KEY));
 }
 
 static void OnOverrideRemove(HWND hDlg)
@@ -248,7 +247,96 @@ static void OnOverrideRemove(HWND hDlg)
     RefreshOverrideList(hDlg, next);
 }
 
-static INT_PTR CALLBACK DlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM /*lParam*/)
+// --- Resizable-layout support ------------------------------------------------
+// Each control tracks the dialog's growth (dx, dy in pixels) per its anchor
+// flags. Captured at WM_INITDIALOG, applied on WM_SIZE.
+enum { ANCHOR_MOVEX = 1, ANCHOR_MOVEY = 2, ANCHOR_SIZEW = 4, ANCHOR_SIZEH = 8 };
+
+struct AnchoredCtl { int id; unsigned flags; RECT rc; };
+
+struct DlgLayout
+{
+    SIZE initClient;                 // client size at init
+    SIZE minTrack;                   // minimum window size
+    std::vector<AnchoredCtl> ctls;
+};
+
+static void InitLayout(HWND hDlg)
+{
+    static const struct { int id; unsigned flags; } table[] = {
+        { IDC_DICT_MODE,     ANCHOR_SIZEW },
+        { IDC_DICT_PATH,     ANCHOR_SIZEW },
+        { IDC_BROWSE,        ANCHOR_MOVEX },
+        { IDC_OVR_GROUP,     ANCHOR_SIZEW | ANCHOR_SIZEH },
+        { IDC_OVR_LIST,      ANCHOR_SIZEW | ANCHOR_SIZEH },
+        { IDC_OVR_KEYLABEL,  ANCHOR_MOVEY },
+        { IDC_OVR_KEY,       ANCHOR_MOVEY },
+        { IDC_OVR_CANDLABEL, ANCHOR_MOVEY },
+        { IDC_OVR_CANDS,     ANCHOR_MOVEY | ANCHOR_SIZEW },
+        { IDC_OVR_ADD,       ANCHOR_MOVEX | ANCHOR_MOVEY },
+        { IDC_OVR_REMOVE,    ANCHOR_MOVEX | ANCHOR_MOVEY },
+        { IDOK,              ANCHOR_MOVEX | ANCHOR_MOVEY },
+        { IDCANCEL,          ANCHOR_MOVEX | ANCHOR_MOVEY },
+    };
+
+    DlgLayout* L = new DlgLayout();
+    RECT rc; GetClientRect(hDlg, &rc);
+    L->initClient.cx = rc.right;
+    L->initClient.cy = rc.bottom;
+
+    int listH = 0;
+    for (const auto& t : table)
+    {
+        HWND h = GetDlgItem(hDlg, t.id);
+        if (!h) continue;
+        AnchoredCtl c{ t.id, t.flags, {} };
+        GetWindowRect(h, &c.rc);
+        MapWindowPoints(nullptr, hDlg, reinterpret_cast<POINT*>(&c.rc), 2);
+        if (t.id == IDC_OVR_LIST) listH = c.rc.bottom - c.rc.top;
+        L->ctls.push_back(c);
+    }
+
+    // Minimum window size. Width floors at the design width (labels would clip
+    // if narrower). The dialog is "too tall" on small screens, so allow the
+    // height to shrink until the list is ~3 rows, and no further.
+    RECT wr; GetWindowRect(hDlg, &wr);
+    L->minTrack.cx = wr.right - wr.left;
+    int shrink = listH > 60 ? listH - 60 : 0;
+    L->minTrack.cy = (wr.bottom - wr.top) - shrink;
+
+    SetPropW(hDlg, L"CantoDlgLayout", reinterpret_cast<HANDLE>(L));
+}
+
+static void ApplyLayout(HWND hDlg)
+{
+    DlgLayout* L = reinterpret_cast<DlgLayout*>(GetPropW(hDlg, L"CantoDlgLayout"));
+    if (!L) return;
+
+    RECT rc; GetClientRect(hDlg, &rc);
+    int dx = rc.right - L->initClient.cx;
+    int dy = rc.bottom - L->initClient.cy;
+
+    HDWP hdwp = BeginDeferWindowPos(static_cast<int>(L->ctls.size()));
+    for (const auto& c : L->ctls)
+    {
+        HWND h = GetDlgItem(hDlg, c.id);
+        if (!h) continue;
+        int x = c.rc.left + ((c.flags & ANCHOR_MOVEX) ? dx : 0);
+        int y = c.rc.top  + ((c.flags & ANCHOR_MOVEY) ? dy : 0);
+        int w = (c.rc.right - c.rc.left) + ((c.flags & ANCHOR_SIZEW) ? dx : 0);
+        int hh = (c.rc.bottom - c.rc.top) + ((c.flags & ANCHOR_SIZEH) ? dy : 0);
+        if (hdwp)
+            hdwp = DeferWindowPos(hdwp, h, nullptr, x, y, w, hh,
+                                  SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    if (hdwp)
+        EndDeferWindowPos(hdwp);
+
+    // The groupbox frame smears when resized; repaint the dialog cleanly.
+    InvalidateRect(hDlg, nullptr, TRUE);
+}
+
+static INT_PTR CALLBACK DlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     switch (msg)
     {
@@ -269,6 +357,24 @@ static INT_PTR CALLBACK DlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM /*lPa
         SetWindowLongPtrW(hDlg, DWLP_USER,
             reinterpret_cast<LONG_PTR>(new std::vector<CantoOverride>(LoadOverrides())));
         RefreshOverrideList(hDlg, -1);
+        InitLayout(hDlg);
+        return TRUE;
+    }
+
+    case WM_SIZE:
+        ApplyLayout(hDlg);
+        return TRUE;
+
+    case WM_GETMINMAXINFO:
+    {
+        DlgLayout* L =
+            reinterpret_cast<DlgLayout*>(GetPropW(hDlg, L"CantoDlgLayout"));
+        if (L)
+        {
+            MINMAXINFO* mmi = reinterpret_cast<MINMAXINFO*>(lParam);
+            mmi->ptMinTrackSize.x = L->minTrack.cx;
+            mmi->ptMinTrackSize.y = L->minTrack.cy;
+        }
         return TRUE;
     }
 
@@ -348,6 +454,8 @@ static INT_PTR CALLBACK DlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM /*lPa
     case WM_DESTROY:
         delete Model(hDlg);
         SetWindowLongPtrW(hDlg, DWLP_USER, 0);
+        delete reinterpret_cast<DlgLayout*>(GetPropW(hDlg, L"CantoDlgLayout"));
+        RemovePropW(hDlg, L"CantoDlgLayout");
         return FALSE;
 
     default:
