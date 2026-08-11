@@ -21,8 +21,6 @@
 #include "Settings.h"   // ToggleKeyMode
 
 #include <msctf.h>
-#include <ctffunc.h>   // ITfFunctionProvider / ITfFunction / ITfFnConfigure
-#include <ctfutb.h>    // ITfMenu (settings context menu)
 #include <string>
 #include <vector>
 
@@ -32,9 +30,7 @@ class CTextService final :
     public ITfTextInputProcessorEx,
     public ITfThreadMgrEventSink,
     public ITfKeyEventSink,
-    public ITfCompositionSink,
-    public ITfFunctionProvider,   // exposes the config function to Windows
-    public ITfFnConfigure          // the "Keyboard options" dialog entry point
+    public ITfCompositionSink
 {
 public:
     CTextService();
@@ -66,17 +62,6 @@ public:
 
     // --- ITfCompositionSink -------------------------------------------------
     STDMETHODIMP OnCompositionTerminated(TfEditCookie ecWrite, ITfComposition* pComposition) override;
-
-    // --- ITfFunctionProvider ------------------------------------------------
-    STDMETHODIMP GetType(GUID* pguid) override;
-    STDMETHODIMP GetDescription(BSTR* pbstrDesc) override;
-    STDMETHODIMP GetFunction(REFGUID rguid, REFIID riid, IUnknown** ppunk) override;
-
-    // --- ITfFunction (base of ITfFnConfigure) -------------------------------
-    STDMETHODIMP GetDisplayName(BSTR* pbstrName) override;
-
-    // --- ITfFnConfigure -----------------------------------------------------
-    STDMETHODIMP Show(HWND hwndParent, LANGID langid, REFGUID rguidProfile) override;
 
     // ----- Called by the edit sessions (friends via public helpers) ---------
     // These run inside a granted edit cookie.
@@ -192,11 +177,6 @@ private:
     // opens the settings dialog. Reliable in the modern Win11 tray.
     void OnModeButtonClick();
     DWORD m_lastModeClickTick = 0;
-    // Right-click context menu on the mode button: all settings live here
-    // (dictionary, toggle key, font size). BuildSettingsMenu populates it via
-    // ITfMenu (from InitMenu); ApplyMenuChoice applies a selection live.
-    void BuildSettingsMenu(ITfMenu* pMenu);
-    void ApplyMenuChoice(UINT id);
 
     // Lone-Shift detection. TSF does not reliably deliver modifier-only keys to
     // the key-event sink, so a low-level keyboard hook watches Shift instead and
@@ -225,7 +205,6 @@ private:
     void RemoveLangBarButtons();
     CLangBarButton* m_pMainButton = nullptr;
     CLangBarButton* m_pModeButton = nullptr;
-    CLangBarButton* m_pSettingsButton = nullptr; // ⚙ left-click -> options dialog
 
     Dictionary      m_dict;
     CandidateWindow m_candWnd;

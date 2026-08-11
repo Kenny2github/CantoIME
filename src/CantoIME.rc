@@ -1,8 +1,8 @@
 // CantoIME.rc
 //
-// The "Keyboard options" dialog shown by ITfFnConfigure::Show (see
-// OptionsDialog.cpp). The input-indicator icon is generated separately as a .res
-// (see CMakeLists / tools/make-canto-icon.ps1), so it is NOT defined here.
+// The CantoIME options dialog (see OptionsDialog.cpp). The input-indicator icon
+// is generated separately as a .res (see CMakeLists / tools/make-canto-icon.ps1),
+// so it is NOT defined here.
 
 #include <windows.h>
 #include "resource.h"

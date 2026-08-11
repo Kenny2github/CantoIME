@@ -190,10 +190,7 @@ static void UnregisterInprocServer()
 // Registers the TSF text service + its language profile.
 //
 // We use the modern ITfInputProcessorProfileMgr::RegisterProfile (Vista+), NOT
-// the legacy ITfInputProcessorProfiles::Register + AddLanguageProfile. Three
-// things depend on this on Windows 10/11:
-//   * "Keyboard options" appears (Settings invokes our ITfFnConfigure only for a
-//     service registered this way);
+// the legacy ITfInputProcessorProfiles::Register + AddLanguageProfile, because:
 //   * the profile is bound to TEXTSERVICE_LANGID (no phantom entry under the
 //     current input language);
 //   * bEnabledByDefault = FALSE means the IME is NOT auto-added to the input

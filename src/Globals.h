@@ -80,10 +80,6 @@ extern const GUID GUID_Profile;
 // uses the well-known GUID_LBI_INPUTMODE instead.
 extern const GUID GUID_CantoMainButton;
 
-// Language-bar item GUID for the settings button (a left-click opens the options
-// dialog; works in the normal Win11 tray, no desktop Language Bar needed).
-extern const GUID GUID_CantoSettingsButton;
-
 // Icon index used when registering the profile (0 = default/no icon).
 #define TEXTSERVICE_ICON_INDEX 0
 

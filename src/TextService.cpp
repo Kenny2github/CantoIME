@@ -32,7 +32,6 @@
 #include <msctf.h>
 #include <ctffunc.h>   // ITfContextView / display helpers live in msctf; kept for completeness
 #include <windowsx.h>  // GET_WHEEL_DELTA_WPARAM
-#include <commdlg.h>   // GetOpenFileName (custom dictionary)
 #include <unordered_set>
 #include <functional>
 #include <algorithm>
@@ -118,18 +117,6 @@ STDMETHODIMP CTextService::QueryInterface(REFIID riid, void** ppv)
     else if (IsEqualIID(riid, IID_ITfCompositionSink))
     {
         *ppv = static_cast<ITfCompositionSink*>(this);
-    }
-    else if (IsEqualIID(riid, IID_ITfFunctionProvider))
-    {
-        *ppv = static_cast<ITfFunctionProvider*>(this);
-    }
-    else if (IsEqualIID(riid, IID_ITfFunction))
-    {
-        *ppv = static_cast<ITfFunction*>(static_cast<ITfFnConfigure*>(this));
-    }
-    else if (IsEqualIID(riid, IID_ITfFnConfigure))
-    {
-        *ppv = static_cast<ITfFnConfigure*>(this);
     }
 
     if (*ppv)
@@ -272,34 +259,10 @@ void CTextService::AddLangBarButtons()
         m_pModeButton->SetTooltip([this] {
             return std::wstring(m_chineseMode ? L"Chinese mode" : L"English mode");
         });
-        // Left-click toggles; double-click opens the settings dialog (a reliable
-        // path that works in the modern Win11 tray, unlike a second button).
+        // Single-click toggles input mode; double-click opens the settings dialog
+        // (the only settings path, and the one that works in the modern Win11 tray).
         m_pModeButton->SetOnClick([this] { OnModeButtonClick(); });
-        // Right-click opens the settings context menu (needs the desktop Language
-        // Bar, which Win11 hides). The settings button below is the tray-friendly
-        // path. The langbar delivers right-click through InitMenu -> this callback.
-        m_pModeButton->SetMenu([this](ITfMenu* pMenu) { BuildSettingsMenu(pMenu); });
-        m_pModeButton->SetOnMenuSelect([this](UINT id) { ApplyMenuChoice(id); });
         pMgr->AddItem(m_pModeButton);
-    }
-
-    // Settings button (設/设): left-click opens the options dialog. NOTE: Win11's
-    // modern tray only slots the input indicator + the mode button, so this extra
-    // button shows only when the desktop Language Bar is enabled. The reliable
-    // tray path is double-clicking the mode button (see OnModeButtonClick).
-    m_pSettingsButton = new (std::nothrow) CLangBarButton(
-        CLSID_CantoIME, GUID_CantoSettingsButton,
-        TF_LBI_STYLE_BTN_BUTTON | TF_LBI_STYLE_SHOWNINTRAY, 2, L"CantoIME settings");
-    if (m_pSettingsButton)
-    {
-        // 設 (Traditional) / 设 (Simplified) = "settings". Escapes so the glyph
-        // does not depend on the source-file encoding MSVC assumes.
-        m_pSettingsButton->SetGlyph([] {
-            return std::wstring(CANTO_IS_SIMPLIFIED ? L"\u8BBE" : L"\u8A2D"); // 设 / 設
-        });
-        m_pSettingsButton->SetTooltip([] { return std::wstring(L"CantoIME settings"); });
-        m_pSettingsButton->SetOnClick([] { ShowOptionsDialog(nullptr); });
-        pMgr->AddItem(m_pSettingsButton);
     }
 
     pMgr->Release();
@@ -312,15 +275,13 @@ void CTextService::RemoveLangBarButtons()
         SUCCEEDED(m_pThreadMgr->QueryInterface(IID_ITfLangBarItemMgr,
                                                reinterpret_cast<void**>(&pMgr))))
     {
-        if (m_pMainButton)     pMgr->RemoveItem(m_pMainButton);
-        if (m_pModeButton)     pMgr->RemoveItem(m_pModeButton);
-        if (m_pSettingsButton) pMgr->RemoveItem(m_pSettingsButton);
+        if (m_pMainButton) pMgr->RemoveItem(m_pMainButton);
+        if (m_pModeButton) pMgr->RemoveItem(m_pModeButton);
         pMgr->Release();
     }
 
-    if (m_pMainButton)     { m_pMainButton->Release();     m_pMainButton = nullptr; }
-    if (m_pModeButton)     { m_pModeButton->Release();     m_pModeButton = nullptr; }
-    if (m_pSettingsButton) { m_pSettingsButton->Release(); m_pSettingsButton = nullptr; }
+    if (m_pMainButton) { m_pMainButton->Release(); m_pMainButton = nullptr; }
+    if (m_pModeButton) { m_pModeButton->Release(); m_pModeButton = nullptr; }
 }
 
 // Mode button click handler. Single-click toggles input mode. A double-click
@@ -383,8 +344,10 @@ LRESULT CALLBACK CTextService::MsgWndProc(HWND hWnd, UINT msg, WPARAM wParam, LP
 
     case WM_CANTO_OPTIONS:
         // Run the modal dialog from the message loop, not inside the langbar
-        // click callback (avoids reentrancy).
-        ShowOptionsDialog(nullptr);
+        // click callback (avoids reentrancy). Apply the new settings immediately
+        // on OK so they take effect without switching away and back.
+        if (self && ShowOptionsDialog(nullptr))
+            self->ApplySettings();
         return 0;
 
     // Light/dark theme switched: WM_SETTINGCHANGE carries "ImmersiveColorSet".
@@ -1533,107 +1496,6 @@ bool CTextService::ToggleKeyMatches(DWORD vk) const
     }
 }
 
-// Menu-item id ranges for the settings context menu.
-enum {
-    kDictTrad = 100, kDictSimp = 101, kDictCustom = 102,
-    kTogBoth  = 200, kTogLeft  = 201, kTogRight   = 202, kTogNeither = 203,
-    kFontBase = 300, // id = kFontBase + point size
-};
-
-// Builds the right-click settings menu via ITfMenu (submenus + radio checks).
-// The language bar calls this through InitMenu when the button is right-clicked.
-void CTextService::BuildSettingsMenu(ITfMenu* pMenu)
-{
-    CantoSettings s = LoadSettings();
-
-    auto item = [](ITfMenu* m, UINT id, const wchar_t* text, bool checked)
-    {
-        m->AddMenuItem(id, checked ? TF_LBMENUF_RADIOCHECKED : 0, nullptr, nullptr,
-                       text, static_cast<ULONG>(wcslen(text)), nullptr);
-    };
-    auto submenu = [](ITfMenu* m, const wchar_t* text) -> ITfMenu*
-    {
-        ITfMenu* sub = nullptr;
-        m->AddMenuItem(0, TF_LBMENUF_SUBMENU, nullptr, nullptr,
-                       text, static_cast<ULONG>(wcslen(text)), &sub);
-        return sub;
-    };
-
-    if (ITfMenu* d = submenu(pMenu, L"Dictionary"))
-    {
-        item(d, kDictTrad,   L"Stock Traditional Chinese dictionary", s.dictSource == DictSource::StockTraditional);
-        item(d, kDictSimp,   L"Stock Simplified Chinese dictionary",  s.dictSource == DictSource::StockSimplified);
-        item(d, kDictCustom, L"Custom…", s.dictSource == DictSource::Custom);
-        d->Release();
-    }
-    if (ITfMenu* t = submenu(pMenu, L"Chinese/English toggle key"))
-    {
-        item(t, kTogBoth,    L"Both shifts", s.toggleKey == ToggleKeyMode::Both);
-        item(t, kTogLeft,    L"Left Shift",  s.toggleKey == ToggleKeyMode::LeftShift);
-        item(t, kTogRight,   L"Right Shift", s.toggleKey == ToggleKeyMode::RightShift);
-        item(t, kTogNeither, L"Neither",     s.toggleKey == ToggleKeyMode::Neither);
-        t->Release();
-    }
-    if (ITfMenu* f = submenu(pMenu, L"Candidate font size"))
-    {
-        static const int kSizes[] = { 12, 14, 16, 18, 20, 24, 28, 32, 36, 48 };
-        for (int sz : kSizes)
-            item(f, static_cast<UINT>(kFontBase + sz), std::to_wstring(sz).c_str(), s.fontSize == sz);
-        f->Release();
-    }
-}
-
-// Applies a chosen settings-menu item (from OnMenuSelect), live.
-void CTextService::ApplyMenuChoice(UINT id)
-{
-    CantoSettings s = LoadSettings();
-    bool changed = true;
-
-    switch (id)
-    {
-    case kDictTrad:    s.dictSource = DictSource::StockTraditional; break;
-    case kDictSimp:    s.dictSource = DictSource::StockSimplified;  break;
-    case kDictCustom:
-    {
-        HWND hOwner = GetForegroundWindow();
-        if (!hOwner) hOwner = m_hMsgWnd;
-        wchar_t path[MAX_PATH] = { 0 };
-        if (!s.dictionaryPath.empty())
-            wcsncpy_s(path, s.dictionaryPath.c_str(), _TRUNCATE);
-        OPENFILENAMEW ofn = { sizeof(ofn) };
-        ofn.hwndOwner   = hOwner;
-        ofn.lpstrFilter = L"Text files (*.txt)\0*.txt\0All files (*.*)\0*.*\0";
-        ofn.lpstrFile   = path;
-        ofn.nMaxFile    = MAX_PATH;
-        ofn.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
-        ofn.lpstrTitle  = L"Select dictionary file";
-        if (GetOpenFileNameW(&ofn))
-        {
-            s.dictSource = DictSource::Custom;
-            s.dictionaryPath = path;
-        }
-        else changed = false; // cancelled the file picker
-        break;
-    }
-    case kTogBoth:    s.toggleKey = ToggleKeyMode::Both;       break;
-    case kTogLeft:    s.toggleKey = ToggleKeyMode::LeftShift;  break;
-    case kTogRight:   s.toggleKey = ToggleKeyMode::RightShift; break;
-    case kTogNeither: s.toggleKey = ToggleKeyMode::Neither;    break;
-    default:
-        if (id > kFontBase && id <= kFontBase + 72)
-            s.fontSize = static_cast<int>(id) - kFontBase;
-        else
-            changed = false;
-        break;
-    }
-
-    if (changed)
-    {
-        SaveSettings(s);
-        ApplySettings(); // live: reload dict / resize font / update toggle key
-    }
-}
-
 void CTextService::ApplySettings()
 {
     CantoSettings s = LoadSettings();
@@ -1647,57 +1509,4 @@ void CTextService::ApplySettings()
         m_dict.Load(path);
         m_dictPathLoaded = path;
     }
-}
-
-// ---------------------------------------------------------------------------
-// ITfFunctionProvider + ITfFnConfigure: the "Keyboard options" dialog
-//
-// Windows opens the config dialog by CoCreate(CLSID, IID_ITfFnConfigure) using
-// the CLSID registered via ITfInputProcessorProfiles::Register (see dllmain).
-// It can also QI the function provider and GetFunction(GUID_NULL, ...). Show()
-// stands alone (no active thread manager needed): it just opens the dialog.
-// ---------------------------------------------------------------------------
-
-STDMETHODIMP CTextService::GetType(GUID* pguid)
-{
-    if (pguid == nullptr)
-        return E_INVALIDARG;
-    *pguid = CLSID_CantoIME;
-    return S_OK;
-}
-
-STDMETHODIMP CTextService::GetDescription(BSTR* pbstrDesc)
-{
-    if (pbstrDesc == nullptr)
-        return E_INVALIDARG;
-    *pbstrDesc = SysAllocString(TEXTSERVICE_DESC);
-    return *pbstrDesc ? S_OK : E_OUTOFMEMORY;
-}
-
-STDMETHODIMP CTextService::GetFunction(REFGUID rguid, REFIID riid, IUnknown** ppunk)
-{
-    if (ppunk == nullptr)
-        return E_INVALIDARG;
-    *ppunk = nullptr;
-    if (IsEqualGUID(rguid, GUID_NULL) && IsEqualIID(riid, IID_ITfFnConfigure))
-    {
-        *ppunk = static_cast<ITfFnConfigure*>(this);
-        AddRef();
-        return S_OK;
-    }
-    return E_NOINTERFACE;
-}
-
-STDMETHODIMP CTextService::GetDisplayName(BSTR* pbstrName)
-{
-    if (pbstrName == nullptr)
-        return E_INVALIDARG;
-    *pbstrName = SysAllocString(L"CantoIME Options");
-    return *pbstrName ? S_OK : E_OUTOFMEMORY;
-}
-
-STDMETHODIMP CTextService::Show(HWND hwndParent, LANGID /*langid*/, REFGUID /*rguidProfile*/)
-{
-    ShowOptionsDialog(hwndParent);
-    return S_OK;
 }

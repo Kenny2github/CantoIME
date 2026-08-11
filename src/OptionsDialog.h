@@ -1,7 +1,7 @@
 // OptionsDialog.h
 //
-// The "Keyboard options" configuration dialog, shown from Windows language
-// settings via ITfFnConfigure::Show. It edits the per-user CantoSettings.
+// The CantoIME options dialog, opened by double-clicking the 中/英 mode button.
+// It edits the per-user CantoSettings.
 
 #pragma once
 
