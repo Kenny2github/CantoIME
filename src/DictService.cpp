@@ -17,12 +17,67 @@
 #include "Globals.h"        // CANTO_DICT_FILENAME / CANTO_DICT_SIMPLIFIED
 #include "DictProtocol.h"
 
+#include <msctf.h>          // ITfInputProcessorProfiles (added-keyboard check)
+
 #include <string>
 #include <vector>
 #include <thread>
 #include <mutex>
 
 using namespace dictproto;
+
+// True if any CantoIME variant is currently enabled as an input method for this
+// user, i.e. the keyboard has been added. The service is started early (at logon,
+// for every user), but only stays and loads the dictionary for users who have
+// actually added CantoIME; everyone else exits immediately. If TSF cannot be
+// queried, err toward running (better early than not at all).
+static bool KeyboardIsAdded()
+{
+    struct Variant { CLSID clsid; LANGID lang; GUID profile; };
+    static const Variant kVariants[] = {
+        // HK
+        {{0xBC8FB43B,0x879A,0x4B9C,{0x87,0x23,0x3F,0xE7,0x55,0x6D,0x57,0xE2}}, 0x0C04,
+         {0x38F83831,0xD93F,0x473A,{0x97,0xB7,0x8E,0x59,0x0D,0x41,0xA7,0x2D}}},
+        // TW
+        {{0xC732EC0C,0x99F6,0x43EC,{0x83,0xC5,0x42,0xEC,0x1C,0x94,0x43,0x25}}, 0x0404,
+         {0x973BC8C9,0xA5A2,0x4BC6,{0x90,0xAB,0x8C,0xF4,0xEA,0x25,0xFF,0xBF}}},
+        // MO
+        {{0x7E96AB83,0xF0BF,0x4F24,{0xB4,0x1F,0x2E,0x32,0xBD,0x56,0x2D,0xA6}}, 0x1404,
+         {0x2CB45F66,0x00A5,0x418C,{0x83,0x54,0x87,0xAC,0x7B,0x7C,0x8C,0x85}}},
+        // CN
+        {{0x7C5C8388,0x430C,0x4C15,{0x8A,0x87,0x78,0xA0,0xBB,0x9A,0x48,0x2B}}, 0x0804,
+         {0x1307330C,0xCDBA,0x484F,{0x89,0x1F,0xFE,0xB4,0x59,0x5D,0x43,0x7D}}},
+        // SG
+        {{0xB551180B,0xE874,0x4B04,{0x8B,0x8F,0x3F,0x16,0x34,0x4A,0xD6,0x83}}, 0x1004,
+         {0x43CCFF03,0x2E82,0x4938,{0x88,0xCB,0x15,0xD4,0xCB,0xE0,0x69,0xA7}}},
+    };
+
+    bool added = false;
+    bool determined = false;
+    if (SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)))
+    {
+        ITfInputProcessorProfiles* profiles = nullptr;
+        if (SUCCEEDED(CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
+                CLSCTX_INPROC_SERVER, IID_ITfInputProcessorProfiles,
+                reinterpret_cast<void**>(&profiles))) && profiles)
+        {
+            determined = true;
+            for (const Variant& v : kVariants)
+            {
+                BOOL enabled = FALSE;
+                if (SUCCEEDED(profiles->IsEnabledLanguageProfile(
+                        v.clsid, v.lang, v.profile, &enabled)) && enabled)
+                {
+                    added = true;
+                    break;
+                }
+            }
+            profiles->Release();
+        }
+        CoUninitialize();
+    }
+    return determined ? added : true; // inconclusive -> run anyway
+}
 
 // The one loaded dictionary, guarded for concurrent clients. RESOLVE reads it;
 // SETDICT (and the startup preload) rebuild it.
@@ -198,6 +253,11 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int)
     std::wstring mutexName = L"Local\\CantoIME.dictd";
     HANDLE mutex = CreateMutexW(nullptr, FALSE, mutexName.c_str());
     if (mutex && GetLastError() == ERROR_ALREADY_EXISTS)
+        return 0;
+
+    // Started early for every user at logon; stay only if this user has actually
+    // added a CantoIME keyboard. Otherwise exit without loading anything.
+    if (!KeyboardIsAdded())
         return 0;
 
     PreloadFromSettings();  // hot dictionary before the first request

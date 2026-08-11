@@ -151,30 +151,6 @@ STDMETHODIMP CTextService::Activate(ITfThreadMgr* ptim, TfClientId tid)
     return ActivateEx(ptim, tid, 0);
 }
 
-// Registers the dictionary service for autostart at this user's logon. Written
-// only when the IME actually activates (i.e. the keyboard has been added and
-// used), so the service never runs for users who have not added CantoIME. Also
-// serves as the "was added" marker the installer checks to (re)start the service
-// on update. Idempotent.
-static void EnsureServiceAutostart()
-{
-    std::wstring dir = GetModuleDirectory();
-    if (dir.empty())
-        return;
-    std::wstring cmd = L"\"" + dir + L"canto-dictd.exe\"";
-
-    HKEY key = nullptr;
-    if (RegCreateKeyExW(HKEY_CURRENT_USER,
-            L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, nullptr,
-            REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, nullptr, &key, nullptr) == ERROR_SUCCESS)
-    {
-        RegSetValueExW(key, L"CantoIME Dictionary Service", 0, REG_SZ,
-                       reinterpret_cast<const BYTE*>(cmd.c_str()),
-                       static_cast<DWORD>((cmd.size() + 1) * sizeof(wchar_t)));
-        RegCloseKey(key);
-    }
-}
-
 STDMETHODIMP CTextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD /*dwFlags*/)
 {
     m_pThreadMgr = ptim;
@@ -199,13 +175,9 @@ STDMETHODIMP CTextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD 
     // (see header note) and the options-dialog request.
     CreateMsgWindow();
 
-    // The keyboard is in use: register the dictionary service for logon
-    // autostart (per-user), then apply settings, which connects to the service
-    // (starting it on demand if it is not already running).
-    EnsureServiceAutostart();
-
     // Apply per-user settings: candidate font size + tell the service which
-    // dictionary to serve (starting it if needed).
+    // dictionary to serve. This connects to the service, starting it on demand
+    // if the logon autostart has not already brought it up.
     ApplySettings();
 
     // Add the language-bar buttons (main 粵 icon + 中/英 input-mode toggle).

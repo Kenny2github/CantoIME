@@ -149,7 +149,7 @@ set_target_properties(canto-dictd PROPERTIES OUTPUT_NAME "canto-dictd")
 target_include_directories(canto-dictd PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_definitions(canto-dictd PRIVATE
     UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX CANTO_VARIANT_HK)
-target_link_libraries(canto-dictd PRIVATE advapi32)
+target_link_libraries(canto-dictd PRIVATE advapi32 ole32 uuid)
 if(MSVC)
     target_compile_options(canto-dictd PRIVATE /W4 /permissive-)
 endif()

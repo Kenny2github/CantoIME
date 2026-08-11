@@ -66,6 +66,13 @@ Source: "..\build\Release\canto-dictd.exe"; DestDir: "{app}"; Flags: ignoreversi
 ; Clean up the per-user options key on uninstall (not created at install time;
 ; the IME writes it when the user changes options).
 Root: HKCU; Subkey: "Software\CantoIME"; Flags: uninsdeletekey dontcreatekey
+; Start the dictionary service at every user's logon, running as that user. It
+; starts early (before the first switch into the IME) but self-gates: it stays
+; and loads the dictionary only if that user has actually added a CantoIME
+; keyboard, and exits immediately otherwise.
+Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; \
+    ValueName: "CantoIME Dictionary Service"; ValueData: """{app}\canto-dictd.exe"""; \
+    Flags: uninsdeletevalue
 
 [Run]
 ; Register the selected variant's TSF text service via the 64-bit regsvr32.
@@ -84,13 +91,12 @@ Filename: "{sys}\regsvr32.exe"; Parameters: "/s ""{app}\CantoIME-CN.dll"""; \
 Filename: "{sys}\regsvr32.exe"; Parameters: "/s ""{app}\CantoIME-SG.dll"""; \
     Check: IsVariant('SG'); StatusMsg: "Registering Singapore (Simplified) input method..."; \
     Flags: runhidden waituntilterminated
-; Start the dictionary service now ONLY if this user had already added CantoIME
-; before (marker written by the IME on first use, present across an update). So
-; an update brings the service back up without waiting for the next logon. A
-; fresh install does NOT start it: it starts when the keyboard is first used (the
-; IME registers its per-user autostart then). Runs as the original (non-elevated)
-; user so the per-user pipe matches the IME.
-Filename: "{app}\canto-dictd.exe"; Check: ServiceWasEnabled(); \
+; Start the dictionary service now (as the original, non-elevated user, so its
+; per-user pipe and keyboard check match the IME). It self-gates: on a fresh
+; install where the keyboard is not yet added it just exits; on an update where
+; the keyboard was already added it stays and serves. Either way the logon
+; autostart brings it back on subsequent sessions.
+Filename: "{app}\canto-dictd.exe"; \
     StatusMsg: "Starting dictionary service..."; \
     Flags: nowait runhidden runasoriginaluser
 
@@ -98,12 +104,6 @@ Filename: "{app}\canto-dictd.exe"; Check: ServiceWasEnabled(); \
 ; Stop the resident dictionary service first, so its executable can be removed.
 Filename: "{sys}\taskkill.exe"; Parameters: "/f /im canto-dictd.exe"; \
     Flags: runhidden; RunOnceId: "StopDictd"
-; Remove the per-user logon-autostart marker the IME wrote. (UninstallRun does
-; not support runasoriginaluser, so this cleans the uninstalling user's HKCU;
-; a stale entry for another user is harmless — it points at a removed exe.)
-Filename: "{sys}\reg.exe"; \
-    Parameters: "delete ""HKCU\Software\Microsoft\Windows\CurrentVersion\Run"" /v ""CantoIME Dictionary Service"" /f"; \
-    Flags: runhidden; RunOnceId: "DelDictdAutostart"
 ; Unregister BEFORE files are removed. Only the variant DLL actually present in
 ; {app} gets unregistered (exactly the one that was installed).
 Filename: "{sys}\regsvr32.exe"; Parameters: "/u /s ""{app}\CantoIME-HK.dll"""; \
@@ -230,16 +230,6 @@ end;
 function IsVariant(Tag: String): Boolean;
 begin
   Result := SelectedVariant() = Tag;
-end;
-
-{ True if this user has already added/used CantoIME (the IME writes this Run
-  marker on first activation). Used to decide whether an update should restart
-  the dictionary service. A fresh install leaves it absent, so the service is
-  not started until the keyboard is first used. }
-function ServiceWasEnabled(): Boolean;
-begin
-  Result := RegValueExists(HKEY_CURRENT_USER,
-    'Software\Microsoft\Windows\CurrentVersion\Run', 'CantoIME Dictionary Service');
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
