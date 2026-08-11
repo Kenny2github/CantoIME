@@ -98,10 +98,12 @@ Filename: "{app}\canto-dictd.exe"; Check: ServiceWasEnabled(); \
 ; Stop the resident dictionary service first, so its executable can be removed.
 Filename: "{sys}\taskkill.exe"; Parameters: "/f /im canto-dictd.exe"; \
     Flags: runhidden; RunOnceId: "StopDictd"
-; Remove the per-user logon-autostart marker the IME wrote (as that user).
+; Remove the per-user logon-autostart marker the IME wrote. (UninstallRun does
+; not support runasoriginaluser, so this cleans the uninstalling user's HKCU;
+; a stale entry for another user is harmless — it points at a removed exe.)
 Filename: "{sys}\reg.exe"; \
     Parameters: "delete ""HKCU\Software\Microsoft\Windows\CurrentVersion\Run"" /v ""CantoIME Dictionary Service"" /f"; \
-    Flags: runhidden runasoriginaluser; RunOnceId: "DelDictdAutostart"
+    Flags: runhidden; RunOnceId: "DelDictdAutostart"
 ; Unregister BEFORE files are removed. Only the variant DLL actually present in
 ; {app} gets unregistered (exactly the one that was installed).
 Filename: "{sys}\regsvr32.exe"; Parameters: "/u /s ""{app}\CantoIME-HK.dll"""; \
