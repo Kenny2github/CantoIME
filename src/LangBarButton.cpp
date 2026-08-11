@@ -35,9 +35,9 @@ HICON MakeGlyphIcon(const std::wstring& glyph)
     const bool dark = SystemUsesDarkTheme();
     const int  tone = dark ? 240 : 16;
 
-    // Target ink HEIGHT at the final size: ~12px in a 16px cell (measured from
-    // Microsoft Quick), scaled with the cell so it holds at higher DPI.
-    const int targetH = cy * 12 / 16;
+    // Target ink HEIGHT at the final size: ~14px in a 16px cell, scaled with the
+    // cell so it holds at higher DPI.
+    const int targetH = cy * 14 / 16;
 
     // Supersample: render large, then box-downscale for smooth anti-aliasing.
     // Rendering straight at ~12px gave jagged edges; a 4x render + HALFTONE

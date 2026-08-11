@@ -43,13 +43,18 @@ static void FillDictModeCombo(HWND hCombo)
     SendMessageW(hCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Custom"));
 }
 
-// Enables the path edit + Browse only when "Custom" is selected.
+// Enables the path edit + Browse only when "Custom" is selected, and disables OK
+// while "Custom" is selected without a file chosen.
 static void UpdateDictControls(HWND hDlg)
 {
     LRESULT mode = SendMessageW(GetDlgItem(hDlg, IDC_DICT_MODE), CB_GETCURSEL, 0, 0);
     BOOL custom = (mode == DICT_CUSTOM);
     EnableWindow(GetDlgItem(hDlg, IDC_DICT_PATH), custom);
     EnableWindow(GetDlgItem(hDlg, IDC_BROWSE), custom);
+
+    BOOL okAllowed = !custom ||
+        GetWindowTextLengthW(GetDlgItem(hDlg, IDC_DICT_PATH)) > 0;
+    EnableWindow(GetDlgItem(hDlg, IDOK), okAllowed);
 }
 
 static void FillFontCombo(HWND hCombo, int current)
@@ -143,17 +148,29 @@ static INT_PTR CALLBACK DlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM /*lPa
                 UpdateDictControls(hDlg);
             return TRUE;
 
+        case IDC_DICT_PATH:
+            // Re-check the OK button as the custom path is typed/cleared/browsed.
+            if (HIWORD(wParam) == EN_CHANGE)
+                UpdateDictControls(hDlg);
+            return TRUE;
+
         case IDC_BROWSE:
             OnBrowse(hDlg);
             return TRUE;
 
         case IDOK:
         {
+            LRESULT mode = SendMessageW(GetDlgItem(hDlg, IDC_DICT_MODE), CB_GETCURSEL, 0, 0);
+            // Custom requires a file; refuse to submit without one (the OK button
+            // is also disabled, but guard here in case Enter reaches us).
+            if (mode == DICT_CUSTOM &&
+                GetWindowTextLengthW(GetDlgItem(hDlg, IDC_DICT_PATH)) == 0)
+                return TRUE;
+
             // Start from the stored settings so a remembered custom path survives
             // switching to a stock choice and back.
             CantoSettings s = LoadSettings();
 
-            LRESULT mode = SendMessageW(GetDlgItem(hDlg, IDC_DICT_MODE), CB_GETCURSEL, 0, 0);
             s.dictSource = IndexToSource(mode);
             if (s.dictSource == DictSource::Custom)
             {
