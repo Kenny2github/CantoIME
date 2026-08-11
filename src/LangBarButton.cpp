@@ -217,14 +217,19 @@ STDMETHODIMP CLangBarButton::OnClick(TfLBIClick click, POINT /*pt*/, const RECT*
     return S_OK;
 }
 
-STDMETHODIMP CLangBarButton::InitMenu(ITfMenu* /*pMenu*/)
+STDMETHODIMP CLangBarButton::InitMenu(ITfMenu* pMenu)
 {
-    return E_NOTIMPL; // no drop-down menu
+    if (!m_menu || pMenu == nullptr)
+        return E_NOTIMPL;
+    m_menu(pMenu);
+    return S_OK;
 }
 
-STDMETHODIMP CLangBarButton::OnMenuSelect(UINT /*wID*/)
+STDMETHODIMP CLangBarButton::OnMenuSelect(UINT wID)
 {
-    return E_NOTIMPL;
+    if (m_onMenuSelect)
+        m_onMenuSelect(wID);
+    return S_OK;
 }
 
 STDMETHODIMP CLangBarButton::GetIcon(HICON* phIcon)

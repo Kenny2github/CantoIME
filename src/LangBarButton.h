@@ -31,9 +31,17 @@ public:
     CLangBarButton(REFCLSID clsidService, REFGUID guidItem, DWORD style,
                    ULONG sort, const std::wstring& description);
 
+    // Populates the drop-down menu (called from InitMenu). Only meaningful when
+    // the button style includes TF_LBI_STYLE_BTN_MENU.
+    using MenuFn = std::function<void(ITfMenu*)>;
+    // Invoked when a menu item is chosen; the argument is the item id.
+    using MenuSelectFn = std::function<void(UINT)>;
+
     void SetGlyph(TextFn fn) { m_glyph = std::move(fn); }
     void SetTooltip(TextFn fn) { m_tooltipFn = std::move(fn); }
     void SetOnClick(ClickFn fn) { m_onClick = std::move(fn); }
+    void SetMenu(MenuFn fn) { m_menu = std::move(fn); }
+    void SetOnMenuSelect(MenuSelectFn fn) { m_onMenuSelect = std::move(fn); }
 
     // Tells the language bar to re-query our icon/text (after a mode change).
     void Update();
@@ -71,6 +79,8 @@ private:
     TextFn              m_tooltipFn; // dynamic tooltip (overrides m_tooltip)
     TextFn              m_glyph;
     ClickFn             m_onClick;
+    MenuFn              m_menu;         // populates the drop-down menu
+    MenuSelectFn        m_onMenuSelect; // handles a chosen menu item
     ITfLangBarItemSink* m_pSink = nullptr; // advised by the language bar
 };
 

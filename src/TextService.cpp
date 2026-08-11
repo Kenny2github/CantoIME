@@ -47,6 +47,9 @@ CTextService* CTextService::s_kbdOwner = nullptr;
 // Posted from the keyboard hook to the message-only window to run the toggle on
 // the UI thread.
 static const UINT WM_CANTO_TOGGLE = WM_APP + 0x101;
+
+// Menu item id for the main button's "Options…" entry.
+static const UINT kMenuOptions = 1;
 static const wchar_t* kMsgWndClass = L"CantoIME_" CANTO_VARIANT_TAG L"_MsgWnd";
 
 static bool IsShiftVK(WPARAM vk); // defined with the key-handling helpers below
@@ -246,12 +249,27 @@ void CTextService::AddLangBarButtons()
     // Main input-method button: the input-indicator glyph (粵). Static.
     m_pMainButton = new (std::nothrow) CLangBarButton(
         CLSID_CantoIME, GUID_CantoMainButton,
-        TF_LBI_STYLE_BTN_BUTTON | TF_LBI_STYLE_SHOWNINTRAY, 0, L"CantoIME");
+        TF_LBI_STYLE_BTN_MENU | TF_LBI_STYLE_SHOWNINTRAY, 0, L"CantoIME");
     if (m_pMainButton)
     {
         // U+7CB5 粵 (Yue / Cantonese). Use an escape, not a literal, so the
         // glyph does not depend on the source-file encoding MSVC assumes.
         m_pMainButton->SetGlyph([] { return std::wstring(L"\u7CB5"); }); // 粵
+        // Third-party TIPs can't surface config in Settings' "Keyboard options"
+        // (in-box IMEs only), so the tray indicator's menu is how the options
+        // dialog is reached. TF_LBI_STYLE_BTN_MENU (above) makes clicking it open
+        // this menu.
+        m_pMainButton->SetMenu([](ITfMenu* pMenu)
+        {
+            const wchar_t* label = L"Options…"; // Options…
+            pMenu->AddMenuItem(kMenuOptions, 0, nullptr, nullptr,
+                               label, static_cast<ULONG>(wcslen(label)), nullptr);
+        });
+        m_pMainButton->SetOnMenuSelect([](UINT id)
+        {
+            if (id == kMenuOptions)
+                ShowOptionsDialog(nullptr);
+        });
         pMgr->AddItem(m_pMainButton);
     }
 
