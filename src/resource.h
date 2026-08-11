@@ -13,6 +13,13 @@
 #define IDC_TOGGLE    1003
 #define IDC_FONTSIZE  1004
 
+// Custom-candidate override controls.
+#define IDC_OVR_LIST   1005
+#define IDC_OVR_KEY    1006
+#define IDC_OVR_CANDS  1007
+#define IDC_OVR_ADD    1008
+#define IDC_OVR_REMOVE 1009
+
 #ifndef IDC_STATIC
 #define IDC_STATIC    (-1)
 #endif

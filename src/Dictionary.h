@@ -11,6 +11,7 @@
 
 #include <string>
 #include <vector>
+#include <utility>
 #include <unordered_map>
 
 class Dictionary
@@ -25,6 +26,12 @@ public:
     // Reloads from the last successfully loaded path. Returns false if we
     // have never been given a path.
     bool Reload();
+
+    // Merges user overrides on top of the currently-loaded dictionary. For each
+    // (key, candidates) pair the candidates are appended after the stock ones
+    // (deduped), and keys with no stock entry are added. Call after Load().
+    void ApplyOverrides(
+        const std::vector<std::pair<std::wstring, std::vector<std::wstring>>>& overrides);
 
     // Looks up an exact romanization key. Returns the candidate list, or an empty
     // vector if the key is not present. The comparison is case-insensitive
@@ -50,6 +57,10 @@ public:
     const std::wstring& Path() const { return m_path; }
 
 private:
+    // Rebuilds the sorted key list used for prefix scans from m_map. Called
+    // after a load or an override merge changes the key set.
+    void RebuildIndex();
+
     std::wstring m_path;
     std::unordered_map<std::wstring, std::vector<std::wstring>> m_map;
     std::vector<std::wstring> m_sortedKeys; // all keys, sorted, for prefix scans

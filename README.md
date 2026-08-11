@@ -129,10 +129,22 @@ The dialog edits three per-user settings, stored in `HKCU\Software\CantoIME`:
   button still works). Holding shift for capitals is unaffected.
 - **Candidate font size** — the candidate window font height; the window width
   grows with it. Default 18 px.
+- **Custom candidates** — associate a romanization key with one or more extra
+  candidates without editing any file. Type a key (e.g. `nei`) and one or more
+  space-separated candidates (e.g. `你 妳`), then **Add / Update**; select a row
+  to edit it, or **Remove** it. Overrides are stored under
+  `HKCU\Software\CantoIME\Overrides` and are **merged on top of** the selected
+  dictionary at load: the extra candidates are appended after the stock ones for
+  that key (a key with no stock entry is added outright). This replaces the old
+  advice to hand-edit a `.txt` file for small personalizations.
 
 Changes apply the next time CantoIME gains focus (re-select it or click into a
 text box). If the selected dictionary file is missing, no candidates are produced
 (typing still works; Enter commits the raw romanization).
+
+The dictionary is parsed on a **background thread**, so switching to CantoIME (or
+changing the dictionary/overrides) never blocks the UI. Until the load finishes
+— a fraction of a second — typing simply produces no candidates yet.
 
 ---
 
@@ -279,9 +291,11 @@ cleanly.
 ### 6. Customize at runtime
 
 Open **Keyboard options** (see [Options](#options-keyboard-options-dialog)) to
-choose the dictionary (Stock Traditional / Stock Simplified / Custom) and the
-candidate font size. Or edit the installed `traditional.txt` / `simplified.txt`
-in `C:\Program Files\CantoIME\` directly. Changes are re-read the next time
+choose the dictionary (Stock Traditional / Stock Simplified / Custom), the
+candidate font size, and to add **custom candidates** for individual keys via the
+UI (no file editing needed). To change many entries at once you can still edit the
+installed `traditional.txt` / `simplified.txt` in `C:\Program Files\CantoIME\`
+directly, or point *Custom* at your own file. Changes are re-read the next time
 CantoIME gains focus (re-select it or click into a text box). You can also edit
 the stock files in the repo before building/installing.
 

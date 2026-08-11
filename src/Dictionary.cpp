@@ -137,13 +137,48 @@ bool Dictionary::Load(const std::wstring& path)
 
     // Build the sorted key list used for prefix scans. Done once per load so
     // KeysWithPrefix can binary-search instead of scanning the whole map.
+    RebuildIndex();
+
+    return true;
+}
+
+void Dictionary::RebuildIndex()
+{
     m_sortedKeys.clear();
     m_sortedKeys.reserve(m_map.size());
     for (const auto& kv : m_map)
         m_sortedKeys.push_back(kv.first);
     std::sort(m_sortedKeys.begin(), m_sortedKeys.end());
+}
 
-    return true;
+void Dictionary::ApplyOverrides(
+    const std::vector<std::pair<std::wstring, std::vector<std::wstring>>>& overrides)
+{
+    if (overrides.empty())
+        return;
+
+    bool changed = false;
+    for (const auto& ov : overrides)
+    {
+        std::wstring key = ToLower(ov.first);
+        if (key.empty() || ov.second.empty())
+            continue;
+
+        // Append after the stock candidates, skipping any that already exist so
+        // an override that duplicates a stock character does not surface twice.
+        std::vector<std::wstring>& vec = m_map[key];
+        std::unordered_set<std::wstring> seen(vec.begin(), vec.end());
+        for (const std::wstring& c : ov.second)
+            if (seen.insert(c).second)
+                vec.push_back(c);
+
+        if (key.size() > m_maxKeyLen)
+            m_maxKeyLen = key.size();
+        changed = true;
+    }
+
+    if (changed)
+        RebuildIndex();
 }
 
 bool Dictionary::Reload()

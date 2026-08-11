@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <vector>
 #include <string>
+#include <cwctype>
 
 // Dictionary source dropdown. The selected index maps 1:1 to DictSource and is
 // the sole selector for which dictionary the IME reads.
@@ -121,6 +122,132 @@ static void OnBrowse(HWND hDlg)
         SetDlgItemTextW(hDlg, IDC_DICT_PATH, path);
 }
 
+// --- Custom-candidate overrides ----------------------------------------------
+//
+// The dialog edits a working copy of the overrides (a heap vector held in
+// DWLP_USER) so Cancel discards changes. OK persists it via SaveOverrides.
+
+static std::wstring LowerTrim(const std::wstring& s)
+{
+    size_t a = 0, b = s.size();
+    while (a < b && iswspace(s[a])) ++a;
+    while (b > a && iswspace(s[b - 1])) --b;
+    std::wstring out = s.substr(a, b - a);
+    for (auto& c : out)
+        c = static_cast<wchar_t>(towlower(c));
+    return out;
+}
+
+static std::vector<std::wstring> SplitTokens(const std::wstring& s)
+{
+    std::vector<std::wstring> out;
+    size_t i = 0;
+    while (i < s.size())
+    {
+        while (i < s.size() && iswspace(s[i])) ++i;
+        size_t start = i;
+        while (i < s.size() && !iswspace(s[i])) ++i;
+        if (i > start)
+            out.push_back(s.substr(start, i - start));
+    }
+    return out;
+}
+
+static std::wstring JoinTokens(const std::vector<std::wstring>& v)
+{
+    std::wstring out;
+    for (size_t i = 0; i < v.size(); ++i)
+    {
+        if (i) out += L' ';
+        out += v[i];
+    }
+    return out;
+}
+
+static std::vector<CantoOverride>* Model(HWND hDlg)
+{
+    return reinterpret_cast<std::vector<CantoOverride>*>(GetWindowLongPtrW(hDlg, DWLP_USER));
+}
+
+// Repopulates the list box from the model. The list order mirrors the model
+// order (index N in the list is model[N]), so selection maps back directly.
+static void RefreshOverrideList(HWND hDlg, int selectIndex)
+{
+    HWND hList = GetDlgItem(hDlg, IDC_OVR_LIST);
+    SendMessageW(hList, LB_RESETCONTENT, 0, 0);
+    for (const CantoOverride& ov : *Model(hDlg))
+    {
+        std::wstring line = ov.first + L"\t" + JoinTokens(ov.second);
+        SendMessageW(hList, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(line.c_str()));
+    }
+    if (selectIndex >= 0)
+        SendMessageW(hList, LB_SETCURSEL, selectIndex, 0);
+}
+
+static void OnOverrideSelChange(HWND hDlg)
+{
+    LRESULT sel = SendMessageW(GetDlgItem(hDlg, IDC_OVR_LIST), LB_GETCURSEL, 0, 0);
+    if (sel == LB_ERR)
+        return;
+    const std::vector<CantoOverride>& model = *Model(hDlg);
+    if (sel < 0 || static_cast<size_t>(sel) >= model.size())
+        return;
+    SetDlgItemTextW(hDlg, IDC_OVR_KEY, model[sel].first.c_str());
+    SetDlgItemTextW(hDlg, IDC_OVR_CANDS, JoinTokens(model[sel].second).c_str());
+}
+
+static void OnOverrideAdd(HWND hDlg)
+{
+    wchar_t keyBuf[128] = { 0 };
+    wchar_t candBuf[512] = { 0 };
+    GetDlgItemTextW(hDlg, IDC_OVR_KEY, keyBuf, 128);
+    GetDlgItemTextW(hDlg, IDC_OVR_CANDS, candBuf, 512);
+
+    std::wstring key = LowerTrim(keyBuf);
+    std::vector<std::wstring> cands = SplitTokens(candBuf);
+    if (key.empty() || cands.empty())
+    {
+        MessageBeep(MB_ICONWARNING);
+        return;
+    }
+
+    std::vector<CantoOverride>& model = *Model(hDlg);
+    int selectIndex = -1;
+    auto it = std::find_if(model.begin(), model.end(),
+                           [&](const CantoOverride& o) { return o.first == key; });
+    if (it != model.end())
+    {
+        it->second = std::move(cands); // update in place
+        selectIndex = static_cast<int>(it - model.begin());
+    }
+    else
+    {
+        model.emplace_back(key, std::move(cands));
+        selectIndex = static_cast<int>(model.size()) - 1;
+    }
+
+    RefreshOverrideList(hDlg, selectIndex);
+}
+
+static void OnOverrideRemove(HWND hDlg)
+{
+    LRESULT sel = SendMessageW(GetDlgItem(hDlg, IDC_OVR_LIST), LB_GETCURSEL, 0, 0);
+    std::vector<CantoOverride>& model = *Model(hDlg);
+    if (sel == LB_ERR || sel < 0 || static_cast<size_t>(sel) >= model.size())
+    {
+        MessageBeep(MB_ICONWARNING);
+        return;
+    }
+    model.erase(model.begin() + sel);
+    SetDlgItemTextW(hDlg, IDC_OVR_KEY, L"");
+    SetDlgItemTextW(hDlg, IDC_OVR_CANDS, L"");
+
+    int next = static_cast<int>(sel);
+    if (next >= static_cast<int>(model.size()))
+        next = static_cast<int>(model.size()) - 1;
+    RefreshOverrideList(hDlg, next);
+}
+
 static INT_PTR CALLBACK DlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM /*lParam*/)
 {
     switch (msg)
@@ -137,12 +264,30 @@ static INT_PTR CALLBACK DlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM /*lPa
 
         FillToggleCombo(GetDlgItem(hDlg, IDC_TOGGLE), s.toggleKey);
         FillFontCombo(GetDlgItem(hDlg, IDC_FONTSIZE), s.fontSize);
+
+        // Working copy of the overrides; freed in WM_DESTROY.
+        SetWindowLongPtrW(hDlg, DWLP_USER,
+            reinterpret_cast<LONG_PTR>(new std::vector<CantoOverride>(LoadOverrides())));
+        RefreshOverrideList(hDlg, -1);
         return TRUE;
     }
 
     case WM_COMMAND:
         switch (LOWORD(wParam))
         {
+        case IDC_OVR_LIST:
+            if (HIWORD(wParam) == LBN_SELCHANGE)
+                OnOverrideSelChange(hDlg);
+            return TRUE;
+
+        case IDC_OVR_ADD:
+            OnOverrideAdd(hDlg);
+            return TRUE;
+
+        case IDC_OVR_REMOVE:
+            OnOverrideRemove(hDlg);
+            return TRUE;
+
         case IDC_DICT_MODE:
             if (HIWORD(wParam) == CBN_SELCHANGE)
                 UpdateDictControls(hDlg);
@@ -188,6 +333,8 @@ static INT_PTR CALLBACK DlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM /*lPa
                 s.fontSize = static_cast<int>(font);
 
             SaveSettings(s);
+            if (std::vector<CantoOverride>* model = Model(hDlg))
+                SaveOverrides(*model);
             EndDialog(hDlg, IDOK);
             return TRUE;
         }
@@ -196,6 +343,11 @@ static INT_PTR CALLBACK DlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM /*lPa
             EndDialog(hDlg, IDCANCEL);
             return TRUE;
         }
+        return FALSE;
+
+    case WM_DESTROY:
+        delete Model(hDlg);
+        SetWindowLongPtrW(hDlg, DWLP_USER, 0);
         return FALSE;
 
     default:
