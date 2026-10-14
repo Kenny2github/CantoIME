@@ -146,6 +146,29 @@ The dictionary is parsed on a **background thread**, so switching to CantoIME (o
 changing the dictionary/overrides) never blocks the UI. Until the load finishes
 — a fraction of a second — typing simply produces no candidates yet.
 
+### Dictionary cache (mmap)
+
+Parsing the text dictionary is the slow part of a load, so each dictionary also
+gets a binary cache laid out for memory mapping. The IME maps it read-only and
+answers lookups in place: a binary search over a small page index picks the one
+4 KB page that holds a key, and only the pages actually touched are read from
+disk. Layout (see `src/Dictionary.cpp`):
+
+- **Header page:** magic, format version, the source file's size + last-write
+  time (a mismatch means stale), entry/block/page counts, region offsets.
+- **Page index:** one entry per data block (first page, page count, first key),
+  page-aligned.
+- **Data pages:** sorted entries packed into 4 KB pages, never straddling a
+  page, each page with its own entry count and offset table. An entry too big
+  for one page gets a run of whole pages to itself.
+
+Stock dictionaries are cached next to the file (`traditional.txt.cache`) by the
+installer via `canto-mkcache.exe`. Custom dictionaries are cached per user at
+`%LOCALAPPDATA%\CantoIME\cache\<hash>.cache` (prebuilt when locked in through
+the options dialog). A missing, stale, or damaged cache is never trusted: the
+IME falls back to parsing the text and rewrites the cache for next time.
+Overrides are kept in a small in-memory overlay consulted on top of the mapping.
+
 ---
 
 ## Repository layout
@@ -169,7 +192,9 @@ CantoIME/
     ├── EditSession.h       # reusable ITfEditSession adapter (lambda callback)
     ├── CandidateWindow.h/.cpp  # owner-drawn GDI popup, sizable CJK font
     ├── LangBarButton.h/.cpp    # language-bar buttons (粵 icon, 中/英 mode toggle)
-    ├── Dictionary.h/.cpp   # UTF-8 loader + lookup + reload
+    ├── Dictionary.h/.cpp   # UTF-8 loader, mmap cache, lookup
+    ├── mkcache.cpp         # canto-mkcache.exe: prebuilds dictionary caches
+    ├── dicttest.cpp        # canto-dicttest.exe: cache check run in CI
     ├── Settings.h/.cpp     # per-user options in HKCU\Software\CantoIME
     ├── OptionsDialog.h/.cpp # "Keyboard options" dialog (ITfFnConfigure::Show)
     ├── resource.h          # dialog/control IDs

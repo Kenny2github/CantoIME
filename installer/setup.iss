@@ -57,6 +57,9 @@ Source: "..\build\Release\CantoIME-SG.dll"; DestDir: "{app}"; Check: IsVariant('
 ; reads; simplified.txt ships for future use. Removed with the app on uninstall.
 Source: "..\traditional.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\simplified.txt";  DestDir: "{app}"; Flags: ignoreversion
+; Cache builder. Run post-install to prebuild the stock dictionaries' mmap
+; caches, and by the options dialog when a custom dictionary is locked in.
+Source: "..\build\Release\canto-mkcache.exe"; DestDir: "{app}"; Flags: ignoreversion 64bit
 
 [Registry]
 ; Clean up the per-user options key on uninstall (not created at install time;
@@ -80,6 +83,21 @@ Filename: "{sys}\regsvr32.exe"; Parameters: "/s ""{app}\CantoIME-CN.dll"""; \
 Filename: "{sys}\regsvr32.exe"; Parameters: "/s ""{app}\CantoIME-SG.dll"""; \
     Check: IsVariant('SG'); StatusMsg: "Registering Singapore (Simplified) input method..."; \
     Flags: runhidden waituntilterminated
+; Prebuild the mmap cache for BOTH stock dictionaries. They are machine-wide,
+; so the caches live next to them and serve every user; the IME maps them
+; instead of parsing 10+ MB of text. Custom dictionaries are per-user and are
+; cached under %LOCALAPPDATA% (by the options dialog, or on first load).
+Filename: "{app}\canto-mkcache.exe"; \
+    Parameters: """{app}\traditional.txt"" ""{app}\simplified.txt"""; \
+    StatusMsg: "Preparing dictionaries..."; Flags: runhidden waituntilterminated
+
+[UninstallDelete]
+; Caches are generated after install (not tracked as installed files), so remove
+; them explicitly, including any ".old" left from replacing a mapped cache, plus
+; the per-user cache folder.
+Type: files; Name: "{app}\*.cache"
+Type: files; Name: "{app}\*.cache.old"
+Type: filesandordirs; Name: "{localappdata}\CantoIME"
 
 [UninstallRun]
 ; Unregister BEFORE files are removed. Only the variant DLL actually present in

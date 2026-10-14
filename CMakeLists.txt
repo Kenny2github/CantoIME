@@ -131,3 +131,18 @@ add_canto_variant(TW)  # Taiwan          (Traditional)
 add_canto_variant(MO)  # Macao SAR       (Traditional)
 add_canto_variant(CN)  # China           (Simplified)
 add_canto_variant(SG)  # Singapore       (Simplified)
+
+# Command-line tools sharing Dictionary.cpp, built into the same Release folder.
+#   canto-mkcache  ships with the app: the installer runs it for the stock
+#                  dictionaries and the options dialog for a custom one, so the
+#                  IME maps a prebuilt cache instead of parsing text.
+#   canto-dicttest is the cache check CI runs (not shipped).
+add_executable(canto-mkcache src/mkcache.cpp src/Dictionary.cpp)
+add_executable(canto-dicttest src/dicttest.cpp src/Dictionary.cpp)
+foreach(tool canto-mkcache canto-dicttest)
+    target_include_directories(${tool} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_compile_definitions(${tool} PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+    if(MSVC)
+        target_compile_options(${tool} PRIVATE /W4 /permissive-)
+    endif()
+endforeach()
