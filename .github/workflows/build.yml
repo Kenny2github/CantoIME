@@ -27,6 +27,12 @@ jobs:
       - name: Build (Release)
         run: cmake --build build --config Release
 
+      # Builds the mmap cache for both stock dictionaries (plus a synthetic one
+      # with a multi-page entry), maps it, and checks every query against the
+      # text parse, along with stale/truncated/corrupt cache handling.
+      - name: Test dictionary cache
+        run: build\Release\canto-dicttest.exe traditional.txt simplified.txt
+
       # Inno Setup is not preinstalled on windows-latest; Chocolatey is.
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
@@ -48,6 +54,7 @@ jobs:
                     build\Release\CantoIME-SG.dll, `
                     build\Release\traditional.txt, `
                     build\Release\simplified.txt, `
+                    build\Release\canto-mkcache.exe, `
                     installer\Output\CantoIME-Setup.exe dist\
 
       - name: Upload artifact

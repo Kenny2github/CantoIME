@@ -123,6 +123,41 @@ static void OnBrowse(HWND hDlg)
         SetDlgItemTextW(hDlg, IDC_DICT_PATH, path);
 }
 
+// Kicks off canto-mkcache.exe (ships next to the DLL) to prebuild the per-user
+// mmap cache for a just-locked-in custom dictionary, so its first switch-in is
+// not slowed by parsing text. Stock dictionaries are cached machine-wide at
+// install time, so only custom dictionaries need this. Detached and best-effort:
+// the IME still works (parsing once, then caching) if the tool is missing or
+// fails.
+static void LaunchCustomCachePrebuild(const std::wstring& customPath)
+{
+    std::wstring dir = GetModuleDirectory(); // includes a trailing separator
+    if (dir.empty())
+        return;
+    std::wstring tool = dir + L"canto-mkcache.exe";
+
+    // Pass the expanded path: the runtime loads the expanded path, and the
+    // per-user cache file name is derived from it.
+    wchar_t buf[MAX_PATH] = { 0 };
+    DWORD n = ExpandEnvironmentStringsW(customPath.c_str(), buf, MAX_PATH);
+    std::wstring dictPath = (n > 0 && n <= MAX_PATH) ? std::wstring(buf) : customPath;
+    if (dictPath.empty())
+        return;
+
+    std::wstring cmd = L"\"" + tool + L"\" --per-user \"" + dictPath + L"\"";
+    std::vector<wchar_t> cmdBuf(cmd.begin(), cmd.end());
+    cmdBuf.push_back(L'\0');
+
+    STARTUPINFOW si = { sizeof(si) };
+    PROCESS_INFORMATION pi = {};
+    if (CreateProcessW(tool.c_str(), cmdBuf.data(), nullptr, nullptr, FALSE,
+                       CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
+    {
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess); // detached: do not wait
+    }
+}
+
 // --- Custom-candidate overrides ----------------------------------------------
 //
 // The dialog edits a working copy of the overrides (a per-dictionary model held
@@ -524,6 +559,8 @@ static INT_PTR CALLBACK DlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM lPara
             // Start from the stored settings so a remembered custom path survives
             // switching to a stock choice and back.
             CantoSettings s = LoadSettings();
+            DictSource   oldSrc  = s.dictSource;
+            std::wstring oldPath = s.dictionaryPath;
 
             s.dictSource = IndexToSource(mode);
             if (s.dictSource == DictSource::Custom)
@@ -547,6 +584,14 @@ static INT_PTR CALLBACK DlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM lPara
             if (OverrideModel* m = ModelState(hDlg))
                 for (const auto& kv : m->byDict)
                     SaveOverrides(kv.first, kv.second);
+
+            // If a custom dictionary was locked in, prebuild its per-user cache
+            // now (in the background) so its first switch-in maps a cache instead
+            // of parsing text. Stock dictionaries are cached at install time.
+            if (s.dictSource == DictSource::Custom &&
+                (oldSrc != DictSource::Custom || s.dictionaryPath != oldPath))
+                LaunchCustomCachePrebuild(s.dictionaryPath);
+
             EndDialog(hDlg, IDOK);
             return TRUE;
         }
