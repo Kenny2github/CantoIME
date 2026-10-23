@@ -9,8 +9,7 @@
 ;   * unregisters it via regsvr32 /u on uninstall (before files are removed),
 ;   * on the Finished page, optionally (checkbox, on by default) adds the keyboard
 ;     to the installing user's keyboards for the chosen language. Silent installs
-;     add it too; pass /NOADDKEYBOARD to opt out (also unticks the box);
-;   * on uninstall, removes the keyboard from the user's keyboards.
+;     add it too; pass /NOADDKEYBOARD to opt out (also unticks the box).
 ;
 ; Variants: HK/TW/MO (Traditional), CN/SG (Simplified). The variant list on the
 ; selection page is built from the user's installed languages; if none is a
@@ -133,7 +132,6 @@ var
   AddKbdText: TNewStaticText;   { on the Finished page }
   AddKbdCheck: TNewCheckBox;
   gInstalled: Boolean;          { install finished (ssPostInstall reached) }
-  gHadKbd: Boolean;             { keyboard was already registered + in the list }
 
 function UserLanguages(): String;
 var
@@ -332,107 +330,45 @@ begin
   end;
 end;
 
-{ HKCU subkey holding the user's keyboards for the first (or Second) of the
-  variant's tags; an added keyboard is a value there named after its tip. }
-function ProfileKey(const Tags: String; const Second: Boolean): String;
+{ Adds the keyboard to the user's language list. Run as the original
+  (non-elevated) user so it lands in their list, not an elevating admin's.
+  Exits 2 if the list still lacks it afterwards: Set-WinUserLanguageList can
+  drop a tip it doesn't accept without raising an error. }
+procedure AddKeyboard();
 var
-  T: String;
-begin
-  T := Tags;
-  StringChangeEx(T, '''', '', True);
-  if Second then
-    T := Copy(T, Pos(',', T) + 1, MaxInt)
-  else
-    T := Copy(T, 1, Pos(',', T) - 1);
-  Result := 'Control Panel\International\User Profile\' + T;
-end;
-
-function TipInList(const Tip, Tags: String): Boolean;
-begin
-  Result := RegValueExists(HKEY_CURRENT_USER, ProfileKey(Tags, False), Tip)
-         or RegValueExists(HKEY_CURRENT_USER, ProfileKey(Tags, True), Tip);
-end;
-
-{ Adds (Add) or removes the keyboard in the user's language list. Run as the
-  original (non-elevated) user so it changes their list, not an elevating
-  admin's. Returns False if that failed. }
-function SetKeyboard(const Add: Boolean): Boolean;
-var
-  Tip, Tags, Op: String;
+  Tip, Tags: String;
   ResultCode: Integer;
+  Started: Boolean;
 begin
   VariantTip(SelectedVariant(), Tip, Tags);
-  if Add then
-    Op := ' if ($lang.InputMethodTips -notcontains $tip) {'
-      + ' $lang.InputMethodTips.Add($tip); Set-WinUserLanguageList $list -Force }'
-  else
-    Op := ' $t = @($lang.InputMethodTips) -eq $tip | Select-Object -First 1;'
-      + ' if ($t) { [void]$lang.InputMethodTips.Remove($t); Set-WinUserLanguageList $list -Force }';
-  Result := ExecAsOriginalUser(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+  Started := ExecAsOriginalUser(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
        '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "'
          + '$ErrorActionPreference = ''Stop''; $tip = ''' + Tip + ''';'
          + ' $list = Get-WinUserLanguageList;'
          + ' $lang = $list | Where-Object { $_.LanguageTag -in ' + Tags + ' } | Select-Object -First 1;'
-         + ' if (-not $lang) { exit 1 };' + Op + '"',
-       '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
+         + ' if (-not $lang) { exit 1 };'
+         + ' if ($lang.InputMethodTips -notcontains $tip) {'
+         + ' $lang.InputMethodTips.Add($tip); Set-WinUserLanguageList $list -Force };'
+         + ' $lang = Get-WinUserLanguageList | Where-Object { $_.LanguageTag -in ' + Tags + ' } | Select-Object -First 1;'
+         + ' if ($lang.InputMethodTips -notcontains $tip) { exit 2 }"',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Log(Format('Add keyboard %s: started=%d, exit code=%d', [Tip, Ord(Started), ResultCode]));
+  if not Started or (ResultCode <> 0) then
+    SuppressibleMsgBox('The CantoIME keyboard could not be added automatically. Add it in'
+      + ' Settings > Time & language > Language & region instead.',
+      mbError, MB_OK, IDOK);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
-var
-  Tip, Tags: String;
 begin
   if AddKbdCheck = nil then
     Exit;
-  if CurStep = ssInstall then
-  begin
-    { Before registering: is the keyboard already a real, added keyboard (e.g.
-      an upgrade)? A list entry for an unregistered tip is stale (left by an
-      older build or a manual uninstall) and comes back as soon as the tip is
-      registered again, so it doesn't count. }
-    VariantTip(SelectedVariant(), Tip, Tags);
-    gHadKbd := RegKeyExists(HKEY_LOCAL_MACHINE, 'SOFTWARE\Microsoft\CTF\TIP\' + Copy(Tip, 6, 38))
-               and TipInList(Tip, Tags);
-  end
-  else if CurStep = ssPostInstall then
+  if CurStep = ssPostInstall then
     gInstalled := True
-  else if (CurStep = ssDone) and gInstalled then
-  begin
-    { Every way out of a finished install (Finish, silent install) ends here,
-      once, after the wizard closes and before any restart. (The Finished page
-      has no Cancel button, so Inno disables its close box.) Registration does
-      not add the keyboard (bEnabledByDefault = FALSE); only this does, and an
-      unticked box also undoes a stale entry that registration brought back. }
-    VariantTip(SelectedVariant(), Tip, Tags);
-    if AddKbdCheck.Checked then
-    begin
-      if not SetKeyboard(True) then
-        SuppressibleMsgBox('The CantoIME keyboard could not be added automatically. Add it in'
-          + ' Settings > Time & language > Language & region instead.',
-          mbError, MB_OK, IDOK);
-    end
-    else if not gHadKbd and TipInList(Tip, Tags) then
-      SetKeyboard(False);
-  end;
-end;
-
-{ Uninstall: take the keyboard out of the user's list (and TSF's per-user state
-  for it), before it is unregistered. Unregistering alone leaves these behind,
-  and a later install would bring the keyboard back. Raw registry, as
-  ExecAsOriginalUser is not available to the uninstaller. }
-procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
-var
-  Tag, Tip, Tags: String;
-begin
-  if CurUninstallStep <> usUninstall then
-    Exit;
-  if DllPresent('CantoIME-HK.dll') then Tag := 'HK'
-  else if DllPresent('CantoIME-TW.dll') then Tag := 'TW'
-  else if DllPresent('CantoIME-MO.dll') then Tag := 'MO'
-  else if DllPresent('CantoIME-CN.dll') then Tag := 'CN'
-  else if DllPresent('CantoIME-SG.dll') then Tag := 'SG'
-  else Exit;
-  VariantTip(Tag, Tip, Tags);
-  RegDeleteValue(HKEY_CURRENT_USER, ProfileKey(Tags, False), Tip);
-  RegDeleteValue(HKEY_CURRENT_USER, ProfileKey(Tags, True), Tip);
-  RegDeleteKeyIncludingSubkeys(HKEY_CURRENT_USER, 'Software\Microsoft\CTF\TIP\' + Copy(Tip, 6, 38));
+  { Every way out of a finished install (Finish, silent install) ends here,
+    once, after the wizard closes and before any restart. (The Finished page
+    has no Cancel button, so Inno disables its close box.) gInstalled skips the
+    ssDone that follows a "restart needed" stop on the Preparing page. }
+  else if (CurStep = ssDone) and gInstalled and AddKbdCheck.Checked then
+    AddKeyboard();
 end;
