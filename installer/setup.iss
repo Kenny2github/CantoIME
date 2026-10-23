@@ -211,6 +211,7 @@ begin
 
     KeyboardInstructions := TNewStaticText.Create(WizardForm);
     KeyboardInstructions.Parent := WizardForm.FinishedPage;
+    KeyboardInstructions.ShowAccelChar := False;
     KeyboardInstructions.WordWrap := True;
     SettingsLink := TNewLinkLabel.Create(WizardForm);
     SettingsLink.Parent := WizardForm.FinishedPage;
