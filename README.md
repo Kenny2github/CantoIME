@@ -277,8 +277,8 @@ it). Run `CantoIME-Setup.exe`, choose the variant, and it installs that DLL +
 the chosen variant with 64-bit `regsvr32 /s`. Its last page offers to add the
 keyboard to your keyboards for that language (checked by default; untick it to
 add it later in Settings). Silent installs (`/SILENT`, `/VERYSILENT`) add it
-too; pass `/NOADDKEYBOARD` to skip that (it also unticks the box). Uninstalling
-removes the keyboard from your keyboards. Per-user options (dictionary choice,
+too; pass `/NOADDKEYBOARD` to skip that (it also unticks the box).
+Per-user options (dictionary choice,
 font size) are written to `HKCU\Software\CantoIME` later, by the options dialog.
 
 To register/unregister manually instead of using the installer, from an
