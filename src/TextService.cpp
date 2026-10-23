@@ -1533,18 +1533,20 @@ void CTextService::ApplySettings()
     {
         m_overrides = std::move(overrides);
         m_dictPathLoaded = path;
-        BeginLoadDictionary(path);
+        // Stock dictionaries use a machine-wide sibling cache; a custom (per-user)
+        // dictionary uses the per-user cache only.
+        BeginLoadDictionary(path, s.dictSource != DictSource::Custom);
     }
 }
 
-void CTextService::BeginLoadDictionary(const std::wstring& path)
+void CTextService::BeginLoadDictionary(const std::wstring& path, bool machineWide)
 {
     HWND hwnd = m_hMsgWnd;
     if (!hwnd)
     {
         // No message window to hand the result back through: load synchronously.
         // This should not happen post-activation (the window is created first).
-        m_dict.Load(path);
+        m_dict.Load(path, machineWide);
         m_dict.ApplyOverrides(m_overrides);
         return;
     }
@@ -1557,9 +1559,9 @@ void CTextService::BeginLoadDictionary(const std::wstring& path)
     // from under the thread if the service deactivates mid-load.
     DllAddRef();
     Dictionary* d = new Dictionary();
-    std::thread([d, path, hwnd]()
+    std::thread([d, path, hwnd, machineWide]()
     {
-        d->Load(path);
+        d->Load(path, machineWide);
         if (!PostMessageW(hwnd, WM_CANTO_DICT_READY, reinterpret_cast<WPARAM>(d), 0))
             delete d;
         DllRelease();
