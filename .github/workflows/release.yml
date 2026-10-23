@@ -1,0 +1,61 @@
+name: Release installer
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  upload-installer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Find successful build for the tagged commit
+        id: build
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // For release events, context.sha is the commit the tag points to.
+            // Never fall back to the latest build on a branch.
+            for (let attempt = 0; attempt < 60; attempt++) {
+              const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+                ...context.repo,
+                workflow_id: 'build.yml',
+                head_sha: context.sha,
+                per_page: 100,
+              });
+              const matching = runs.filter(run => run.head_sha === context.sha);
+              const successful = matching.find(run => run.conclusion === 'success');
+              if (successful) {
+                core.setOutput('run-id', successful.id);
+                core.info(`Using build ${successful.id} for ${context.sha}`);
+                return;
+              }
+              if (matching.length && matching.every(run => run.status === 'completed')) {
+                throw new Error(`No successful Build run for ${context.sha}. Rerun Build for this commit, then rerun this release workflow.`);
+              }
+              core.info(`Waiting for Build at ${context.sha} (attempt ${attempt + 1}/60)`);
+              await new Promise(resolve => setTimeout(resolve, 10000));
+            }
+            throw new Error(`Timed out waiting for Build at ${context.sha}. Run Build for this commit, then rerun this release workflow.`);
+
+      # An absent/expired artifact fails this step rather than using another commit.
+      - name: Download the matching build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: CantoIME-x64
+          path: dist
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.build.outputs.run-id }}
+
+      - name: Upload installer to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          test -f dist/CantoIME-Setup.exe
+          gh release upload "$RELEASE_TAG" dist/CantoIME-Setup.exe --clobber
