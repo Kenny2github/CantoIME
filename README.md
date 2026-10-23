@@ -274,11 +274,7 @@ if you have no Chinese language, it shows an "add a language first" page instead
 Add the matching Chinese language in Windows **first** (the installer requires
 it). Run `CantoIME-Setup.exe`, choose the variant, and it installs that DLL +
 `traditional.txt` / `simplified.txt` to `C:\Program Files\CantoIME\` and registers
-the chosen variant with 64-bit `regsvr32 /s`. Its last page offers to add the
-keyboard to your keyboards for that language (checked by default; untick it to
-add it later in Settings). Silent installs (`/SILENT`, `/VERYSILENT`) add it
-too; pass `/NOADDKEYBOARD` to skip that (it also unticks the box).
-Per-user options (dictionary choice,
+the chosen variant with 64-bit `regsvr32 /s`. Per-user options (dictionary choice,
 font size) are written to `HKCU\Software\CantoIME` later, by the options dialog.
 
 To register/unregister manually instead of using the installer, from an
